@@ -1,0 +1,14 @@
+{
+  "name": "halo-ce-web",
+  "private": true,
+  "description": "Serves the browser build (ninja web) with Cloudflare Workers: wrangler dev locally, wrangler deploy to Cloudflare",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "upload-maps": "node upload_maps.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.146.0"
+  }
+}
