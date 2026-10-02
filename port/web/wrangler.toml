@@ -1,0 +1,33 @@
+# The browser build (ninja web) on Cloudflare Workers; see README.md. In this
+# folder, `npm run dev` serves it on localhost, `npm run deploy` publishes it.
+# Paths are relative to this file.
+
+name = "halo-web"
+main = "worker/worker.js"
+compatibility_date = "2026-09-01"
+
+# the site's addresses; the worker also answers on halo-web.<account>.workers.dev
+routes = [
+	{ pattern = "openhaloce.com", custom_domain = true },
+	{ pattern = "www.openhaloce.com", custom_domain = true },
+]
+workers_dev = true
+
+# halo.html, halo.js and halo.wasm, as `ninja web` writes them (its
+# .assetsignore leaves out the object files). The worker answers every request
+# first, so that every response gets the cross-origin isolation headers.
+[assets]
+directory = "../../build/web"
+binding = "ASSETS"
+run_worker_first = true
+html_handling = "none"
+not_found_handling = "none"
+
+# The game's maps, at maps/<name>.map (npm run upload-maps). They are too large
+# for static assets, whose files are limited to 25 MiB.
+[[r2_buckets]]
+binding = "MAPS"
+bucket_name = "open-halo-ce"
+
+[dev]
+port = 8765

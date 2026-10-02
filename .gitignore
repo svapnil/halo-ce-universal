@@ -30,3 +30,9 @@ original/
 
 # CI build outputs (tools/ci_build.py)
 dist/
+
+# The browser build's server (port/web: package.json, wrangler.toml), its
+# local state (with a copy of the maps) and its local secrets
+node_modules/
+.wrangler/
+.dev.vars*

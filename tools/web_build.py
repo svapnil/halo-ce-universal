@@ -4,7 +4,8 @@ It compiles the same units as the native Linux build (tools/linux_build.py)
 with Emscripten for WebAssembly, adds ``port/web/src``, and links
 ``build/web/halo.html`` with ``halo.js`` and ``halo.wasm``. WebAssembly
 (wasm32) has 32-bit pointers, as the game's data needs. See
-port/web/README.md for the design; tools/web_serve.py serves the build.
+port/web/README.md for the design; the worker in port/web/worker serves the
+build (port/web/wrangler.toml).
 """
 
 from pathlib import Path
@@ -198,6 +199,15 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         implicit_outputs=[build_dir / "halo.js", build_dir / "halo.wasm"],
         variables={"ldflags": " ".join(ldflags)},
     )
-    n.build(outputs="web", rule="phony", inputs=output)
+    # the worker serves build/web as its static assets (port/web/wrangler.toml), which
+    # must not include the object files
+    assets_ignore = build_dir / ".assetsignore"
+    n.rule(
+        name="web_assetsignore",
+        command="$python -c \"open(r'$out', 'w').write('obj' + chr(10))\"",
+        description="WEB $out",
+    )
+    n.build(outputs=assets_ignore, rule="web_assetsignore", implicit=[Path("tools/web_build.py")])
+    n.build(outputs="web", rule="phony", inputs=[output, assets_ignore])
     n.newline()
 
