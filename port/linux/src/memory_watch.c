@@ -19,6 +19,116 @@ renderer can protect the pages again before the kernel writes them.
 
 #include "platform.h"
 
+#ifdef __EMSCRIPTEN__
+#include <string.h>
+
+/* WebAssembly has no page protection, so no write faults to count. A range
+is compared with its contents instead: its first and last 256 bytes and 512
+words spread across the rest (texture data changes as a whole, when the game
+loads a different bitmap there). The generation of a range changes only when
+that sample does, so the renderer keeps what it built until then. Reporting
+every range as written, instead, would rebuild each texture at each use. */
+#define WATCH_SAMPLE_EDGE_BYTES 256UL
+#define WATCH_SAMPLE_WORDS 512UL
+#define WATCH_RANGE_SLOTS 8192
+
+struct watched_range
+{
+	unsigned long address, size;
+	unsigned long checksum;
+	unsigned long generation;
+};
+
+static struct watched_range watched_ranges[WATCH_RANGE_SLOTS];
+static unsigned long watch_generation = 1;
+static unsigned long watch_serial = 1;
+static pthread_mutex_t watch_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static unsigned long range_checksum(const unsigned char *bytes, unsigned long size)
+{
+	unsigned long hash = 2166136261UL, index, edge = size < WATCH_SAMPLE_EDGE_BYTES ? size : WATCH_SAMPLE_EDGE_BYTES;
+
+	for (index = 0; index < edge; index++)
+		hash = (hash ^ bytes[index]) * 16777619UL;
+	for (index = size - edge; index < size; index++)
+		hash = (hash ^ bytes[index]) * 16777619UL;
+	if (size >= 4 * WATCH_SAMPLE_WORDS)
+	{
+		unsigned long step = (size / 4) / WATCH_SAMPLE_WORDS;
+		const unsigned int *words = (const unsigned int *)((unsigned long)bytes & ~3UL);
+
+		for (index = 0; index < WATCH_SAMPLE_WORDS; index++)
+			hash = (hash ^ words[index * step]) * 16777619UL;
+	}
+	return hash;
+}
+
+void memory_watch_initialize(void)
+{
+}
+
+void memory_watch_protect(unsigned long address, unsigned long size)
+{
+	(void)address;
+	(void)size;
+}
+
+unsigned long memory_watch_generation(unsigned long address, unsigned long size)
+{
+	unsigned long slot, probe, checksum, generation = 0;
+
+	if (!size || !platform_is_contiguous((void *)address))
+		return 0;
+	checksum = range_checksum((const unsigned char *)address, size);
+	pthread_mutex_lock(&watch_lock);
+	slot = ((address >> 7) ^ (size * 2654435761UL)) % WATCH_RANGE_SLOTS;
+	for (probe = 0; probe < WATCH_RANGE_SLOTS; probe++)
+	{
+		struct watched_range *range = &watched_ranges[(slot + probe) % WATCH_RANGE_SLOTS];
+
+		if (range->generation && (range->address != address || range->size != size))
+			continue;
+		if (!range->generation || range->checksum != checksum)
+		{
+			range->address = address;
+			range->size = size;
+			range->checksum = checksum;
+			range->generation = ++watch_generation;
+		}
+		generation = range->generation;
+		break;
+	}
+	if (probe == WATCH_RANGE_SLOTS)
+	{
+		/* the table is full: start again (everything reads as written) */
+		memset(watched_ranges, 0, sizeof(watched_ranges));
+		generation = ++watch_generation;
+	}
+	pthread_mutex_unlock(&watch_lock);
+	return generation;
+}
+
+/* the texture cache reuses an entry without asking for its generation while
+this stays the same: since nothing reports writes, it never does */
+unsigned long memory_watch_serial(void)
+{
+	return __sync_add_and_fetch(&watch_serial, 1);
+}
+
+void memory_watch_prepare_write(void *address, unsigned long size)
+{
+	(void)address;
+	(void)size;
+}
+
+void memory_watch_forget(void *address, unsigned long size)
+{
+	(void)address;
+	(void)size;
+}
+
+#else
+
 #include <execinfo.h>
 #include <signal.h>
 #include <stdio.h>
@@ -223,3 +333,5 @@ void memory_watch_forget(void *address, unsigned long size)
 		page_generation[page] = __sync_add_and_fetch(&current_generation, 1);
 	}
 }
+
+#endif /* __EMSCRIPTEN__ */
