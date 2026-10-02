@@ -9,6 +9,10 @@ mouse state gathered here feeds the controller emulation in xinput_sdl.c
 and the debug keyboard that the game's console reads.
 */
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/html5_webgl.h>
+#endif
 #include "platform.h"
 #include "sdl_platform.h"
 #include "gl.h"
@@ -352,7 +356,12 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	if (scale < 1)
 		scale = 1;
 
-#ifdef HALO_ANDROID
+#if defined(__EMSCRIPTEN__)
+	/* WebGL 2 */
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#elif defined(HALO_ANDROID)
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
@@ -364,6 +373,12 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
+#ifdef __EMSCRIPTEN__
+	/* an opaque canvas: the back buffer's alpha (which the Xbox never shows,
+	and the game leaves at 0 in places) would otherwise make the page show
+	through the picture */
+	SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 0);
+#endif
 	if (config_boolean("debug.gl_debug"))
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_DEBUG_FLAG);
 #if !defined(HALO_ANDROID) && !defined(_WIN32)
@@ -422,12 +437,36 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 
 void platform_video_drawable_size(int *width, int *height)
 {
+#ifdef __EMSCRIPTEN__
+	/* the canvas's drawing buffer, which the page sizes (SDL's window size
+	need not be it) */
+	emscripten_webgl_get_drawing_buffer_size(emscripten_webgl_get_current_context(), width, height);
+#else
 	SDL_GetWindowSizeInPixels(platform_window, width, height);
+#endif
 }
+
+#ifdef __EMSCRIPTEN__
+/* The game runs on a worker, which shows what it drew on its canvas only
+when it returns to the browser's event loop: the game's own loop never does,
+so each frame suspends it (JSPI) until the browser's next frame
+(port/web/README.md). The timer keeps it going where a worker gets no
+animation frames, as in a hidden tab. */
+EM_ASYNC_JS(void, web_wait_for_frame, (void), {
+	await new Promise(resolve => {
+		const timer = setTimeout(resolve, 100);
+		if (typeof requestAnimationFrame == 'function')
+			requestAnimationFrame(() => { clearTimeout(timer); resolve(); });
+	});
+});
+#endif
 
 void platform_video_swap(void)
 {
 	SDL_GL_SwapWindow(platform_window);
+#ifdef __EMSCRIPTEN__
+	web_wait_for_frame();
+#endif
 }
 
 void platform_mouse_capture(BOOL capture)

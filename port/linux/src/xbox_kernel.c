@@ -641,12 +641,35 @@ VOID WINAPI Sleep(DWORD milliseconds)
 
 /* ---------- time */
 
-DWORD WINAPI GetTickCount(void)
+#ifdef __EMSCRIPTEN__
+/* The browser's monotonic clock is the time since 1970 (every thread's
+performance.now() from the same origin), which a DWORD wraps at some
+arbitrary point. The game keeps milliseconds in longs and floats (sound
+timing, for one) that need small values, as the Xbox's count from boot is:
+count from the start of the game instead. */
+static unsigned long long tick_count_origin;
+
+__attribute__((constructor))
+static void tick_count_origin_initialize(void)
 {
 	struct timespec now;
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
-	return (DWORD)((unsigned long long)now.tv_sec * 1000ULL + (unsigned long long)now.tv_nsec / 1000000ULL);
+	tick_count_origin = (unsigned long long)now.tv_sec * 1000ULL + (unsigned long long)now.tv_nsec / 1000000ULL;
+}
+#endif
+
+DWORD WINAPI GetTickCount(void)
+{
+	struct timespec now;
+	unsigned long long milliseconds;
+
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	milliseconds = (unsigned long long)now.tv_sec * 1000ULL + (unsigned long long)now.tv_nsec / 1000000ULL;
+#ifdef __EMSCRIPTEN__
+	milliseconds -= tick_count_origin;
+#endif
+	return (DWORD)milliseconds;
 }
 
 /* The Xbox performance counter runs at the 733 MHz CPU clock. Report a

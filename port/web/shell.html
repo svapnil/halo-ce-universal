@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Halo</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; color: #ccc; font: 14px system-ui, sans-serif; overflow: hidden; }
+  #canvas { display: block; position: absolute; inset: 0; margin: auto; width: 100vw; height: 75vw;
+            max-height: 100vh; max-width: 133.333vh; outline: none; }
+  #status { position: absolute; left: 12px; bottom: 10px; white-space: pre-wrap; pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="0" oncontextmenu="event.preventDefault()"></canvas>
+<div id="status"></div>
+<script>
+  // Settings: any HALO_* query parameter becomes an environment variable,
+  // which port_config.c reads (?HALO_GL_DEBUG=1&HALO_GPU_STATS=1, say).
+  var status = document.getElementById('status');
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    preRun: [function () {
+      new URLSearchParams(location.search).forEach(function (value, name) {
+        if (name.indexOf('HALO_') == 0) ENV[name] = value || '1';
+      });
+    }],
+    print: function (text) { console.log(text); },
+    printErr: function (text) { console.warn(text); },
+    setStatus: function (text) { status.textContent = text; },
+  };
+  if (!crossOriginIsolated)
+    status.textContent = 'This page needs cross-origin isolation (COOP and COEP headers): serve it with tools/web_serve.py.';
+  Module.canvas.addEventListener('pointerdown', function () { Module.canvas.focus(); });
+  Module.canvas.focus();
+  window.addEventListener('error', function (event) { status.textContent = 'Error: ' + event.message; });
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

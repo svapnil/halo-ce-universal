@@ -17,6 +17,7 @@ Xbox kernel does.
 #include "platform.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -48,6 +49,18 @@ static int protection_to_host(DWORD protect)
 __attribute__((constructor(101)))
 static void contiguous_arena_reserve(void)
 {
+#ifdef __EMSCRIPTEN__
+	/* WebAssembly memory is one flat array with no mappings: grow the heap
+	past the window, so that the allocator never hands out an address in
+	it, and the window is ordinary memory (port/web/README.md) */
+	char *top = sbrk(0);
+
+	if ((unsigned long)top <= PLATFORM_CONTIGUOUS_BASE &&
+		sbrk((intptr_t)(PLATFORM_CONTIGUOUS_BASE + PLATFORM_CONTIGUOUS_SIZE - (unsigned long)top)) != (void *)-1)
+		arena_reserved = TRUE;
+	else
+		platform_log("cannot reserve the Xbox contiguous memory window (the heap reaches %p)", (void *)top);
+#else
 	void *wanted = (void *)PLATFORM_CONTIGUOUS_BASE;
 	void *result = mmap(wanted, PLATFORM_CONTIGUOUS_SIZE, PROT_NONE,
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED_NOREPLACE, -1, 0);
@@ -63,6 +76,7 @@ static void contiguous_arena_reserve(void)
 		platform_log("cannot reserve the Xbox contiguous memory window at %p (%s)",
 			wanted, strerror(errno));
 	}
+#endif
 }
 
 BOOL platform_is_contiguous(const void *address)
@@ -140,6 +154,9 @@ void *platform_contiguous_alloc(unsigned long size, unsigned long alignment,
 
 	address = (void *)(PLATFORM_CONTIGUOUS_BASE + first * PAGE_SIZE_BYTES);
 	memory_watch_forget(address, count * PAGE_SIZE_BYTES);
+#ifdef __EMSCRIPTEN__
+	memset(address, 0, count * PAGE_SIZE_BYTES);
+#else
 	/* map fresh zeroed pages over the reservation */
 	if (mmap(address, count * PAGE_SIZE_BYTES, protection_to_host(protect),
 		MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0) != address)
@@ -147,6 +164,7 @@ void *platform_contiguous_alloc(unsigned long size, unsigned long alignment,
 		pthread_mutex_unlock(&arena_lock);
 		return NULL;
 	}
+#endif
 	for (page = first; page < first + count; page++)
 		page_protection[page] = protect;
 	block_page_count[first] = count;
@@ -166,8 +184,10 @@ void platform_contiguous_free(void *address)
 	if (count)
 	{
 		memory_watch_forget(address, count * PAGE_SIZE_BYTES);
+#ifndef __EMSCRIPTEN__
 		mmap(address, count * PAGE_SIZE_BYTES, PROT_NONE,
 			MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
+#endif
 		for (page = first; page < first + count; page++)
 			page_protection[page] = 0;
 		block_page_count[first] = 0;
@@ -209,11 +229,13 @@ BOOL WINAPI VirtualProtect(LPVOID address, SIZE_T size, DWORD new_protect, PDWOR
 		*old_protect = platform_is_contiguous(address) ?
 			page_protection[(start - PLATFORM_CONTIGUOUS_BASE) / PAGE_SIZE_BYTES] : PAGE_READWRITE;
 	memory_watch_forget((void *)start, end - start);
+#ifndef __EMSCRIPTEN__ /* (no page protection: the protection is only recorded) */
 	if (mprotect((void *)start, end - start, protection_to_host(new_protect)) != 0)
 	{
 		platform_set_last_error_from_errno(errno);
 		return FALSE;
 	}
+#endif
 	if (platform_is_contiguous((void *)start))
 	{
 		unsigned long page;

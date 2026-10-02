@@ -928,6 +928,9 @@ static void gl_initialize(void)
 
 		glGenBuffers(STREAM_BUFFER_RING, device.stream_buffers);
 		glGenBuffers(STREAM_BUFFER_RING, device.index_buffers);
+		/* (the browser build uploads into buffers of their own:
+		web_upload_buffer) */
+#ifndef __EMSCRIPTEN__
 		for (ring = 0; ring < STREAM_BUFFER_RING; ring++)
 		{
 			glBindBuffer(GL_ARRAY_BUFFER, device.stream_buffers[ring]);
@@ -935,6 +938,7 @@ static void gl_initialize(void)
 			glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, device.index_buffers[ring]);
 			glBufferData(GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE, NULL, GL_STREAM_DRAW);
 		}
+#endif
 		device.stream_buffer = device.stream_buffers[0];
 		device.index_buffer = device.index_buffers[0];
 	}
@@ -1460,6 +1464,23 @@ HRESULT WINAPI D3DDevice_GetVisibilityTestResult(DWORD index, UINT *result, ULON
 	}
 #endif
 	glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT_AVAILABLE, &available);
+#ifdef __EMSCRIPTEN__
+	{
+		/* WebGL makes a query's result available only once the thread has
+		returned to the browser (after the frame), and the game asks until
+		it is: report the slot's latest result meanwhile, a frame late */
+		static UINT latest_samples[VISIBILITY_TEST_SLOTS];
+
+		if (available)
+		{
+			glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
+			latest_samples[index] = samples ? VISIBILITY_ALL_SAMPLES : 0;
+		}
+		if (result)
+			*result = latest_samples[index];
+		return S_OK;
+	}
+#endif
 	if (!available)
 		return D3DERR_TESTINCOMPLETE;
 	glGetQueryObjectuiv(device.queries[index], GL_QUERY_RESULT, &samples);
@@ -3038,8 +3059,34 @@ static void index_extent(const WORD *indices, unsigned long count, unsigned long
 is full. A draw reserves room for all of its streams at once: orphaning
 between two of them would leave the attributes already pointed at the
 buffer reading its new, empty storage. */
+#ifdef __EMSCRIPTEN__
+/* Each upload writes a buffer of its own, with new storage: in WebGL
+(ANGLE), bufferSubData into a buffer that draws already queued this frame
+read copies the whole buffer first, and the stream buffer is 16 MB with a
+hundred writes a frame. The pools rotate through enough buffers that a draw
+never overwrites one it uses; WebGL forbids a buffer that has been an index
+buffer from becoming a vertex buffer, hence two. */
+#define WEB_UPLOAD_BUFFERS 64
+
+static GLuint web_upload_buffer(GLuint *pool, unsigned int *next)
+{
+	GLuint *buffer = &pool[(*next)++ % WEB_UPLOAD_BUFFERS];
+
+	if (!*buffer)
+		glGenBuffers(1, buffer);
+	return *buffer;
+}
+
+static GLuint web_vertex_buffers[WEB_UPLOAD_BUFFERS], web_index_buffers[WEB_UPLOAD_BUFFERS];
+static unsigned int web_vertex_next, web_index_next;
+#endif
+
 static void stream_reserve(unsigned long size)
 {
+#ifdef __EMSCRIPTEN__
+	(void)size;
+	return;
+#endif
 	if (device.stream_offset + size > STREAM_BUFFER_SIZE)
 	{
 		/* orphan the buffer and start again */
@@ -3054,6 +3101,13 @@ static unsigned long stream_upload(const void *data, unsigned long size)
 	unsigned long offset;
 
 	size = (size + 15) & ~15UL;
+#ifdef __EMSCRIPTEN__
+	(void)offset;
+	device.stream_buffer = web_upload_buffer(web_vertex_buffers, &web_vertex_next);
+	state_array_buffer(device.stream_buffer);
+	glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)size, data, GL_STREAM_DRAW);
+	return 0;
+#endif
 	stream_reserve(size);
 	offset = device.stream_offset;
 	state_array_buffer(device.stream_buffer);
@@ -3113,6 +3167,13 @@ static unsigned long index_upload(const void *data, unsigned long size)
 	unsigned long offset;
 
 	size = (size + 15) & ~15UL;
+#ifdef __EMSCRIPTEN__
+	(void)offset;
+	device.index_buffer = web_upload_buffer(web_index_buffers, &web_index_next);
+	state_element_array_buffer(device.index_buffer);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)size, data, GL_STREAM_DRAW);
+	return 0;
+#endif
 	state_element_array_buffer(device.index_buffer);
 	if (device.index_offset + size > INDEX_BUFFER_SIZE)
 	{
@@ -3421,12 +3482,37 @@ void WINAPI D3DDevice_End(void)
 	if (!count || !prepare_draw(TRUE))
 		return;
 	trace_draw("immediate", type, count, device.immediate_vertices);
+#ifdef __EMSCRIPTEN__
+	/* WebGL caps a vertex stride at 255 bytes, and a vertex of every
+	attribute is 256: each attribute goes in an array of its own */
+	{
+		float *planar = malloc(count * stride);
+		unsigned long vertex;
+
+		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+		{
+			for (vertex = 0; vertex < count; vertex++)
+			{
+				memcpy(planar + (index * count + vertex) * 4,
+					device.immediate_vertices + (vertex * XGPU_VERTEX_ATTRIBUTE_COUNT + index) * 4, 4 * sizeof(float));
+			}
+		}
+		offset = stream_upload(planar, count * stride);
+		free(planar);
+		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
+		{
+			state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE, (GLsizei)(4 * sizeof(float)),
+				offset + index * count * 4 * sizeof(float));
+		}
+	}
+#else
 	offset = stream_upload(device.immediate_vertices, count * stride);
 	for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 	{
 		state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE, (GLsizei)stride,
 			offset + index * 4 * sizeof(float));
 	}
+#endif
 	if (type == D3DPT_QUADLIST)
 	{
 		unsigned long index_count;
