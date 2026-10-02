@@ -12,6 +12,8 @@ the menu has been tried.
   selects a different one. The first build downloads and compiles SDL 3
   (Emscripten's `sdl3` port).
 - Python, and ninja.
+- [Node.js](https://nodejs.org/) 20 or later, for the server (Cloudflare's
+  `wrangler`, which `npm install` installs).
 - A browser with WebGL 2 and JavaScript Promise Integration (JSPI), for
   example Chrome 137 or later.
 - An Xbox disc image of the game (`.xiso` or `.iso`), as for the other ports.
@@ -21,19 +23,47 @@ the menu has been tried.
 1. Go to the root folder of the repository.
 2. Enter `python configure.py`.
 3. Enter `ninja web`.
-4. Enter `python tools/web_serve.py --xiso <disc image>`. The first time, it
-   copies `maps/` out of the disc image into `assets/maps` (approximately
-   1.7 GB). Later, `python tools/web_serve.py` is enough.
-5. Open <http://localhost:8765/> and click the picture so that it takes the
+4. The first time only, enter `python tools/extract_maps.py <disc image>`.
+   It copies `maps/` out of the disc image into `assets/maps` (approximately
+   1.7 GB).
+5. Go to the folder `port/web`.
+6. The first time only:
+   1. Enter `npm install`.
+   2. Enter `npm run upload-maps`. It copies the maps into the local R2
+      bucket of the server (in `port/web/.wrangler/state`, another 1.7 GB).
+7. Enter `npm run dev`.
+8. Open <http://localhost:8765/> and click the picture so that it takes the
    keyboard.
 
-The page must come from `tools/web_serve.py` (or a server that does the same):
+The server is a Cloudflare Worker (`worker/worker.js`, configured by
+`wrangler.toml`), which `npm run dev` runs on the computer. It serves
+`build/web` as its static assets, and the maps from an R2 bucket at
+`maps/<name>.map`. A different server can be used if it does the same:
 
 - The page needs the `Cross-Origin-Opener-Policy: same-origin` and
   `Cross-Origin-Embedder-Policy: require-corp` headers. Without them the
   browser gives it no shared memory, so no threads.
-- The server must answer HTTP range requests. The game reads the maps from
+- The server must answer HTTP range requests, and HEAD requests with
+  `Content-Length` and `Accept-Ranges: bytes`. The game reads the maps from
   the server a chunk at a time.
+- The game asks for `maps//<name>.map` (two slashes), which the server must
+  take as `maps/<name>.map`.
+
+### Deploy to Cloudflare
+
+In the folder `port/web`:
+
+1. Enter `npx wrangler login`.
+2. The first time only:
+   1. Enter `npx wrangler r2 bucket create open-halo-ce`.
+   2. Enter `npm run upload-maps -- --remote`.
+3. Enter `npm run deploy`. It publishes the worker and `build/web` at the
+   addresses in `wrangler.toml` (`openhaloce.com`, `www.openhaloce.com`) and
+   at `halo-web.<account>.workers.dev`. For a different account, change the
+   `routes` and the bucket (`wrangler.toml` and `upload_maps.mjs`).
+
+The maps are the game's data, which you may not give to other people. Keep a
+deployment private, for example with Cloudflare Access on its address.
 
 Settings: each `HALO_*` parameter of the page's address sets the environment
 variable of the same name, which `port_config.c` reads. For example

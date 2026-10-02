@@ -7,7 +7,7 @@ The browser build's start: the game data, then the game's own main
 main runs on a worker (PROXY_TO_PTHREAD), where the file system's fetch
 backend can wait for its downloads. The maps folder is mounted from the web
 server: each file is read from maps/<name> next to the page, in chunks, as
-the game reads it (HTTP range requests; tools/web_serve.py serves them).
+the game reads it (HTTP range requests; port/web/worker/worker.js serves them).
 */
 
 #include <emscripten/wasmfs.h>
