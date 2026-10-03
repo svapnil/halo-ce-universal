@@ -70,6 +70,19 @@ variable of the same name, which `port_config.c` reads. For example
 <http://localhost:8765/?HALO_GL_DEBUG=1&HALO_GPU_STATS=1> logs the WebGL
 errors and the draw counts in the console.
 
+Saves: the game's save drives (`z:`, `u:` and `t:`: player profiles,
+playlists, the checkpoint) are kept in the browser's Origin Private File
+System (`web_main.c`), so they are still there at the next visit. The site's
+data in the browser's settings holds them; clearing it starts afresh. Where
+the browser has no such storage (some private windows), the page says so and
+the saves last for the visit only. The page's online games use player 1's
+last profile, so its name is the player's name online (`web_lobby.c`).
+
+The game's map cache (`z:\cacheNNN.map`, about 770 MB) is deliberately not
+kept: it is rebuilt at each visit instead of filling the browser's storage,
+and so it cannot go stale when the server's maps change. `web_main.c` says
+how to keep it too, should that be wanted.
+
 ## Design
 
 WebAssembly (`wasm32`) has 32-bit pointers. Thus the game's structures, its

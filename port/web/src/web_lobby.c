@@ -25,6 +25,7 @@ game's menus have no other sign of it.
 #include "main/main.h"
 #include "interface/player_ui.h"
 #include "interface/ui_widget.h"
+#include "saved games/player_profile.h"
 #include "networking/network_game_globals.h"
 #include "networking/network_client_manager.h"
 #include "networking/network_server_manager.h"
@@ -145,6 +146,27 @@ EMSCRIPTEN_KEEPALIVE struct web_lobby_mailbox *web_lobby_mailbox(void)
 	return &mailbox;
 }
 
+/* Player 1's profile, whose name the game's player takes online
+(network_game_client_add_player). The game's own menus have the player pick
+it, and remember it in z:\lastprof.txt (saved_game_files.c), but the page's
+lobby goes around them: so the lobby takes the profile the player last used,
+from that file, when none is active (as after a reload: the saves persist,
+web_main.c), and records the active one there for the next visit. */
+static void lobby_use_player1_profile(void)
+{
+	if (player_ui_get_active_player_profile_index(0) == NONE)
+	{
+		long profile_index = player_ui_get_player1_last_used_profile_index();
+		struct player_profile profile;
+
+		if (profile_index == NONE || !player_profile_get(profile_index, &profile))
+			return;
+		player_ui_set_active_player_profile(0, profile_index, &profile);
+		platform_log("lobby: player 1's profile is the last one used");
+	}
+	player_ui_remember_player1_profile(TRUE);
+}
+
 /* ui_widget.c's: a screen opens */
 void web_ui_widget_launching(char const *name)
 {
@@ -157,6 +179,10 @@ void web_ui_widget_launching(char const *name)
 		/* (back at the main menu: a game hosted or joined is over) */
 		if (lobby.state == _lobby_hosting || lobby.state == _lobby_host_waiting || lobby.state == _lobby_joined)
 			lobby.state = _lobby_idle;
+		/* (a profile picked or made in the game's menus is remembered as soon
+		as the player is back here, not only when a campaign starts) */
+		if (player_ui_get_active_player_profile_index(0) != NONE)
+			player_ui_remember_player1_profile(TRUE);
 		lobby_phase(_phase_main_menu, NULL);
 	}
 }
@@ -214,6 +240,7 @@ static void lobby_take_request(void)
 
 static void lobby_start_hosting(void)
 {
+	lobby_use_player1_profile();
 	main_set_multiplayer_map_name(lobby.map);
 	player_ui_fast_setup_network_server();
 	lobby.state = _lobby_host_setup;
@@ -272,6 +299,7 @@ static void lobby_update_hosting(real seconds)
 
 static void lobby_start_joining(void)
 {
+	lobby_use_player1_profile();
 	dispose_global_network_game_client();
 	dispose_global_network_game_server();
 	if (!create_global_network_game_client())

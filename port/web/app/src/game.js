@@ -86,7 +86,18 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 				}
 				onNet(status);
 			};
-			lobby = startLobby(window.Module, onLobby);
+			/* (at the main menu the saves are mounted: web_main.c; where the
+			browser cannot keep them, the player is told) */
+			let savesChecked = false;
+			lobby = startLobby(window.Module, (status) => {
+				if (status.phase === "main-menu" && !savesChecked) {
+					savesChecked = true;
+					if (window.Module._web_saves_persist() === 2) {
+						onStatus("This browser cannot keep saved games: profiles and progress last for this visit only.");
+					}
+				}
+				onLobby(status);
+			});
 			transport = new URLSearchParams(location.search).get("net") === "tabs" ?
 				tabTransport() : sfuTransport({ invite, onStatus: onTransport });
 			startNetBridge(window.Module, transport);
