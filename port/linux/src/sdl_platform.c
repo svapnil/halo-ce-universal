@@ -489,6 +489,18 @@ EMSCRIPTEN_KEEPALIVE void web_reset_keyboard(void)
 {
 	__atomic_store_n(&web_keyboard_reset_requested, 1, __ATOMIC_RELEASE);
 }
+
+/* The page's, as the game's canvas is clicked: whether the game wants the
+mouse (platform_mouse_capture). SDL asks the browser for the pointer lock
+again at a click once it is lost (Esc, another window), but from the game's
+thread, after the click's gesture has gone, and the browser refuses it: the
+page asks in the click itself. */
+static int web_mouse_captured;
+
+EMSCRIPTEN_KEEPALIVE int web_mouse_wants_capture(void)
+{
+	return __atomic_load_n(&web_mouse_captured, __ATOMIC_ACQUIRE);
+}
 #endif
 
 #if !defined(HALO_ANDROID) && !defined(__EMSCRIPTEN__)
@@ -551,6 +563,9 @@ void platform_mouse_capture(BOOL capture)
 {
 	if (platform_window)
 		SDL_SetWindowRelativeMouseMode(platform_window, capture ? true : false);
+#ifdef __EMSCRIPTEN__
+	__atomic_store_n(&web_mouse_captured, platform_window && capture, __ATOMIC_RELEASE);
+#endif
 }
 
 /* ---------- keyboard translation */

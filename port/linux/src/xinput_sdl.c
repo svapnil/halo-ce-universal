@@ -17,6 +17,10 @@ Keyboard and mouse (port 0):
 	escape           start               F1               back
 	F12              release or recapture the mouse
 
+These controls are also listed in the Linux README (Controls) and in the
+browser build's Controls dialog (port/web/app/src/App.jsx: PLAYING_CONTROLS,
+MENU_CONTROLS); a change to them changes those too.
+
 In the menus the mouse is free and drives a pointer instead
 (port/linux/include/halo_ui_pointer.h, source/interface/ui_widget.c): its
 motion, buttons and wheel do not reach the controller then.

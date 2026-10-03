@@ -379,3 +379,70 @@ body {
 	outline: 2px solid var(--text-strong);
 	outline-offset: 1px;
 }
+
+/* Controls */
+.panel-wide {
+	width: min(640px, 100%);
+}
+
+.panel-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+
+.controls {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 0 24px;
+}
+
+.controls-column {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.control-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin: 0;
+}
+
+.control {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.control dt {
+	color: var(--text-strong);
+}
+
+.control dd {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 4px;
+	margin: 0;
+}
+
+kbd {
+	padding: 1px 6px;
+	border: 1px solid var(--edge);
+	border-bottom-width: 2px;
+	border-radius: 4px;
+	background: var(--page);
+	color: var(--text-strong);
+	font: 12px/1.4 ui-monospace, monospace;
+	white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+	.controls {
+		grid-template-columns: 1fr;
+		gap: 16px;
+	}
+}

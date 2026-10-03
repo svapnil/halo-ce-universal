@@ -19,7 +19,10 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
 			className="game-canvas"
 			tabIndex={0}
 			onContextMenu={(event) => event.preventDefault()}
-			onPointerDown={(event) => event.currentTarget.focus()}
+			onPointerDown={(event) => {
+				event.currentTarget.focus();
+				captureMouse(event.currentTarget);
+			}}
 			// the keyboard back from a panel over the game, which kept the
 			// releases of keys pressed before it (sdl_platform.c's
 			// web_reset_keyboard); not there before the game has started
@@ -28,12 +31,24 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
 	);
 }, () => true);
 
+/* the pointer lock back at a click on the game, while the game wants the
+mouse (sdl_platform.c's web_mouse_wants_capture): only a request in the
+click's own handler is granted */
+function captureMouse(canvas) {
+	if (document.pointerLockElement === canvas || !window.Module?._web_mouse_wants_capture?.()) {
+		return;
+	}
+	// (refused for a moment after Esc frees the mouse: the next click again)
+	Promise.resolve(canvas.requestPointerLock()).catch(() => {});
+}
+
 export default function App() {
 	const frame = useRef(null);
 	const [status, setStatus] = useState("");
 	const [net, setNet] = useState(null);
 	const [lobby, setLobby] = useState({ phase: "other", message: "" });
 	const [fullscreen, setFullscreen] = useState(false);
+	const [controlsOpen, setControlsOpen] = useState(false);
 
 	useEffect(() => {
 		const update = () => setFullscreen(document.fullscreenElement === frame.current);
@@ -62,10 +77,15 @@ export default function App() {
 					<GameCanvas onStatus={setStatus} onNet={setNet} onLobby={setLobby} />
 					<MultiplayerMenu lobby={lobby} onClose={focusGame} />
 					<OnlineToast lobby={lobby} net={net} onClose={focusGame} />
+					{controlsOpen && <ControlsDialog onClose={() => { setControlsOpen(false); focusGame(); }} />}
 				</div>
 				<div className="bar">
 					<span className="status">{status}</span>
 					<NetStatus net={net} />
+					<button type="button" className="bar-button" onClick={() => setControlsOpen(!controlsOpen)}
+						aria-label="Controls" aria-expanded={controlsOpen} title="Controls">
+						<ControlsIcon />
+					</button>
 					<button type="button" className="bar-button" onClick={toggleFullscreen}
 						aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
 						title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen"}>
@@ -75,6 +95,20 @@ export default function App() {
 			</div>
 		</main>
 	);
+}
+
+/* the mouse is the page's while a panel shows over the game (a locked
+pointer sends every click to the game) */
+function useReleasedPointer(active) {
+	useEffect(() => {
+		if (!active) {
+			return undefined;
+		}
+		const release = () => document.pointerLockElement && document.exitPointerLock();
+		release();
+		document.addEventListener("pointerlockchange", release);
+		return () => document.removeEventListener("pointerlockchange", release);
+	}, [active]);
 }
 
 /* The page's Multiplayer menu, over the game's when it opens (the game's
@@ -93,17 +127,7 @@ function MultiplayerMenu({ lobby, onClose }) {
 		setOpen(lobby.phase === "multiplayer-menu");
 	}, [lobby]);
 
-	/* the mouse is the page's while the menu shows (a locked pointer sends
-	every click to the game) */
-	useEffect(() => {
-		if (!open) {
-			return undefined;
-		}
-		const release = () => document.pointerLockElement && document.exitPointerLock();
-		release();
-		document.addEventListener("pointerlockchange", release);
-		return () => document.removeEventListener("pointerlockchange", release);
-	}, [open]);
+	useReleasedPointer(open);
 
 	if (!open) {
 		return null;
@@ -186,6 +210,85 @@ function MultiplayerMenu({ lobby, onClose }) {
 				</button>
 			</div>
 		</div>
+	);
+}
+
+/* the keyboard and the mouse as controller 1 (port/linux/src/xinput_sdl.c,
+the Linux README's Controls) */
+const PLAYING_CONTROLS = [
+	["Move", ["W", "A", "S", "D"]],
+	["Aim", ["Mouse"]],
+	["Fire", ["Left click"]],
+	["Throw a grenade", ["Right click", "G"]],
+	["Jump", ["Space"]],
+	["Melee", ["F", "Mouse 4"]],
+	["Action, reload", ["E", "R"]],
+	["Change weapon", ["Tab", "Wheel"]],
+	["Change grenade", ["X"]],
+	["Crouch", ["Ctrl", "C"]],
+	["Zoom", ["Z", "Middle click"]],
+	["Flashlight", ["Q"]],
+	["Pause menu", ["Esc"]],
+	["Scoreboard", ["F1"]],
+];
+
+const MENU_CONTROLS = [
+	["Choose", ["Mouse", "Arrows"]],
+	["Select", ["Left click", "Enter"]],
+	["Back", ["Right click", "Backspace"]],
+	["Scroll", ["Wheel"]],
+];
+
+const PAGE_CONTROLS = [
+	["Aim with the mouse", ["Click the game"]],
+	["Free the mouse", ["Esc"]],
+	["Developer console", ["`"]],
+];
+
+function ControlsDialog({ onClose }) {
+	useReleasedPointer(true);
+
+	return (
+		<div className="overlay" role="dialog" aria-modal="true" aria-labelledby="controls-title"
+			onClick={(event) => event.target === event.currentTarget && onClose()}
+			onKeyDown={(event) => {
+				/* (the game takes the window's keys: these are the dialog's) */
+				event.stopPropagation();
+				if (event.key === "Escape") {
+					onClose();
+				}
+			}}
+			onKeyUp={(event) => event.stopPropagation()}>
+			<div className="panel panel-wide">
+				<div className="panel-header">
+					<h2 id="controls-title" className="panel-title">Controls</h2>
+					<button type="button" className="toast-close" onClick={onClose} aria-label="Close" autoFocus>×</button>
+				</div>
+				<div className="controls">
+					<ControlsSection title="Playing" controls={PLAYING_CONTROLS} />
+					<div className="controls-column">
+						<ControlsSection title="Menus" controls={MENU_CONTROLS} />
+						<ControlsSection title="In the browser" controls={PAGE_CONTROLS} />
+					</div>
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function ControlsSection({ title, controls }) {
+	return (
+		<section className="panel-section">
+			<h3>{title}</h3>
+			<dl className="control-list">
+				{controls.map(([action, keys]) => (
+					<div key={action} className="control">
+						<dt>{action}</dt>
+						<dd>{keys.map((key) => <kbd key={key}>{key}</kbd>)}</dd>
+					</div>
+				))}
+			</dl>
+		</section>
 	);
 }
 
@@ -280,6 +383,15 @@ function NetStatus({ net }) {
 				</button>
 			)}
 		</span>
+	);
+}
+
+function ControlsIcon() {
+	return (
+		<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+			<rect x="2" y="6" width="20" height="12" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+			<path d="M6 10h1M10 10h1M14 10h1M18 10h1M7 14h10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+		</svg>
 	);
 }
 
