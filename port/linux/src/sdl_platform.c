@@ -439,7 +439,10 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	(void)version;
 	platform_event_thread = SDL_GetCurrentThreadID();
 	platform_log("OpenGL %s on %s", (const char *)glGetString(GL_VERSION), (const char *)glGetString(GL_RENDERER));
-#ifndef HALO_ANDROID
+	/* (not in a page: a browser locks the pointer only at a click, so this
+	request would wait for the first one, and lock it in the menus, which
+	want it free, and over the page's panels) */
+#if !defined(HALO_ANDROID) && !defined(__EMSCRIPTEN__)
 	platform_mouse_capture(TRUE);
 #endif
 	return TRUE;
@@ -461,14 +464,31 @@ void platform_video_drawable_size(int *width, int *height)
 when it returns to the browser's event loop: the game's own loop never does,
 so each frame suspends it (JSPI) until the browser's next frame
 (port/web/README.md). The timer keeps it going where a worker gets no
-animation frames, as in a hidden tab. */
+animation frames, as in a hidden tab: a tick's time (33 ms), so that a
+hidden page (Chrome runs a worker's timers on time there) takes in the
+network every tick, as a host must for its players; at 10 frames a second
+it added up to 100 ms to their lag. Where the page shows, a frame comes
+first (a display of 30 Hz or more). */
 EM_ASYNC_JS(void, web_wait_for_frame, (void), {
 	await new Promise(resolve => {
-		const timer = setTimeout(resolve, 100);
+		const timer = setTimeout(resolve, 33);
 		if (typeof requestAnimationFrame == 'function')
 			requestAnimationFrame(() => { clearTimeout(timer); resolve(); });
 	});
 });
+
+/* The page's (port/web/app/src/App.jsx), as the game's canvas takes the
+keyboard back: a panel over it (the page's Multiplayer menu, say) kept the
+releases of the keys pressed before it took the keys, and those keys would
+stay held (Enter, the menus' A, jumping without end). The page runs on the
+browser's thread and the events are pumped on the game's: the next pump
+lets go of every key and button, as the window losing focus does. */
+static int web_keyboard_reset_requested;
+
+EMSCRIPTEN_KEEPALIVE void web_reset_keyboard(void)
+{
+	__atomic_store_n(&web_keyboard_reset_requested, 1, __ATOMIC_RELEASE);
+}
 #endif
 
 #if !defined(HALO_ANDROID) && !defined(__EMSCRIPTEN__)
@@ -846,6 +866,16 @@ void platform_pump_events(void)
 	updater_poll(platform_window);
 #endif
 	pthread_mutex_lock(&input_lock);
+#ifdef __EMSCRIPTEN__
+	if (__atomic_exchange_n(&web_keyboard_reset_requested, 0, __ATOMIC_ACQUIRE))
+	{
+		/* (SDL's own state too, or the next press of a key it still holds
+		would come as a repeat) */
+		SDL_ResetKeyboard();
+		memset(input_state.keys, 0, sizeof(input_state.keys));
+		memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
+	}
+#endif
 	while (SDL_PollEvent(&event))
 	{
 		switch (event.type)

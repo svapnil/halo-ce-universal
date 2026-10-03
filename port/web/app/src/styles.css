@@ -101,3 +101,281 @@ body {
 	outline: 2px solid var(--text-strong);
 	outline-offset: 1px;
 }
+
+.net {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-width: 0;
+	max-width: 60%;
+}
+
+.net-text {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.net-hosting .net-text,
+.net-joined .net-text {
+	color: var(--text-strong);
+}
+
+.net-error .net-text {
+	color: #e5807a;
+}
+
+.net-button {
+	flex: none;
+	height: 26px;
+	padding: 0 10px;
+	border: 1px solid var(--edge);
+	border-radius: 4px;
+	background: none;
+	color: var(--text-strong);
+	font: inherit;
+	cursor: pointer;
+}
+
+.net-button:hover {
+	background: var(--edge);
+}
+
+.net-button:focus-visible {
+	outline: 2px solid var(--text-strong);
+	outline-offset: 1px;
+}
+
+/* the page's panels over the game */
+.overlay {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	padding: 16px;
+	background: rgb(5 7 10 / 0.72);
+	backdrop-filter: blur(2px);
+}
+
+.panel {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+	width: min(420px, 100%);
+	max-height: 100%;
+	overflow: auto;
+	box-sizing: border-box;
+	padding: 20px;
+	border: 1px solid var(--edge);
+	border-radius: 8px;
+	background: var(--frame);
+	box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+}
+
+.panel-title {
+	margin: 0;
+	color: var(--text-strong);
+	font-size: 18px;
+	font-weight: 600;
+}
+
+.panel-section {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	padding-top: 14px;
+	border-top: 1px solid var(--edge);
+}
+
+.panel-section h3 {
+	margin: 0;
+	color: var(--text-strong);
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.panel-hint {
+	margin: 0;
+}
+
+.fields {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 10px;
+}
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	min-width: 0;
+}
+
+.field select,
+.join-row input {
+	height: 32px;
+	padding: 0 8px;
+	border: 1px solid var(--edge);
+	border-radius: 4px;
+	background: var(--page);
+	color: var(--text-strong);
+	font: inherit;
+	min-width: 0;
+}
+
+.join-row {
+	display: flex;
+	gap: 8px;
+}
+
+.join-row input {
+	flex: 1;
+}
+
+.primary-button,
+.secondary-button {
+	height: 32px;
+	padding: 0 14px;
+	border-radius: 4px;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.primary-button {
+	border: 0;
+	background: var(--text-strong);
+	color: var(--page);
+}
+
+.primary-button:hover {
+	background: #fff;
+}
+
+.secondary-button {
+	border: 1px solid var(--edge);
+	background: none;
+	color: var(--text-strong);
+}
+
+.secondary-button:hover:not(:disabled) {
+	background: var(--edge);
+}
+
+.secondary-button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.text-button {
+	align-self: center;
+	padding: 4px;
+	border: 0;
+	background: none;
+	color: var(--text);
+	font: inherit;
+	text-decoration: underline;
+	cursor: pointer;
+}
+
+.text-button:hover {
+	color: var(--text-strong);
+}
+
+.overlay :focus-visible {
+	outline: 2px solid var(--text-strong);
+	outline-offset: 1px;
+}
+
+.toast {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	max-width: calc(100% - 24px);
+	box-sizing: border-box;
+	padding: 10px 10px 10px 14px;
+	border: 1px solid var(--edge);
+	border-radius: 6px;
+	background: rgb(21 24 29 / 0.94);
+	box-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+}
+
+.toast-body {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.toast-body strong {
+	color: var(--text-strong);
+}
+
+.toast-error .toast-body strong {
+	color: #e5807a;
+}
+
+.toast-close {
+	flex: none;
+	width: 26px;
+	height: 26px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: none;
+	color: var(--text);
+	font-size: 18px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.toast-close:hover {
+	background: var(--edge);
+	color: var(--text-strong);
+}
+
+@media (max-width: 520px) {
+	.fields {
+		grid-template-columns: 1fr;
+	}
+}
+
+/* Start now / Wait for friends */
+.choice {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 4px;
+	padding: 3px;
+	border: 1px solid var(--edge);
+	border-radius: 6px;
+	background: var(--page);
+}
+
+.choice-option {
+	display: grid;
+	place-items: center;
+	height: 28px;
+	border-radius: 4px;
+	color: var(--text);
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.choice-option input {
+	position: absolute;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.choice-option.selected {
+	background: var(--edge);
+	color: var(--text-strong);
+}
+
+.choice-option:has(input:focus-visible) {
+	outline: 2px solid var(--text-strong);
+	outline-offset: 1px;
+}

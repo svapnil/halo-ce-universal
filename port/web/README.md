@@ -149,7 +149,9 @@ Known calls that are not yet corrected:
 
 - Saved games and settings are kept in memory only (`/home/web_user`), and
   are lost when the page closes. They need the browser's storage (OPFS).
-- Network play. The browser has no UDP sockets.
+- Network play with the desktop builds. Browsers play system link games
+  with each other through Cloudflare Realtime SFU: the host's page shows an
+  invite to copy. Refer to [NETWORK.md](NETWORK.md).
 - Importing the game data in the page from a disc image. `xiso.c` can do it.
 - Game controllers and the mouse were not tried.
 - Only Chrome was tried.
