@@ -25,6 +25,11 @@ pointer
 F11 switches between fullscreen and the window, and F12 releases or
 recaptures the mouse, always.
 
+These controls (and config.toml's [controls] defaults, port_config.c) are
+also listed in the Linux README (Controls) and in the browser build's
+Controls dialog (port/web/app/src/App.jsx: PLAYING_CONTROLS,
+MENU_CONTROLS); a change to them changes those too.
+
 Mouse aim does not go through the right stick: the game's look code asks
 halo_linux_mouse_look for the motion since its last call and adds it to the
 stick's facing change, so aiming is direct rather than rate based.
