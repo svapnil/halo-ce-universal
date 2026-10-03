@@ -23,6 +23,7 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
 				event.currentTarget.focus();
 				captureMouse(event.currentTarget);
 			}}
+			onKeyDown={(event) => GAME_KEYS.has(event.code) && event.preventDefault()}
 			// the keyboard back from a panel over the game, which kept the
 			// releases of keys pressed before it (sdl_platform.c's
 			// web_reset_keyboard); not there before the game has started
@@ -30,6 +31,14 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
 		/>
 	);
 }, () => true);
+
+/* The game's keys that the browser also acts on (Tab leaves the canvas,
+Space and the arrows scroll, F1 opens help). SDL means to keep them from the
+browser, but it sees them on the game's thread, after the browser has acted:
+the canvas keeps them itself. (The game still gets them.) */
+const GAME_KEYS = new Set([
+	"Tab", "Space", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "F1",
+]);
 
 /* the pointer lock back at a click on the game, while the game wants the
 mouse (sdl_platform.c's web_mouse_wants_capture): only a request in the
