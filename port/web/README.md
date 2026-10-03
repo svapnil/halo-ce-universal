@@ -83,6 +83,10 @@ kept: it is rebuilt at each visit instead of filling the browser's storage,
 and so it cannot go stale when the server's maps change. `web_main.c` says
 how to keep it too, should that be wanted.
 
+The page asks the player to confirm they own the original game before the
+game loads (`App.jsx`). A Confirm is kept in the browser's `localStorage`,
+so it is asked once; a Deny is not kept, and the game does not load.
+
 ## Design
 
 WebAssembly (`wasm32`) has 32-bit pointers. Thus the game's structures, its
