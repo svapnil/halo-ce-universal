@@ -58,6 +58,8 @@ export default function App() {
 	const [lobby, setLobby] = useState({ phase: "other", message: "" });
 	const [fullscreen, setFullscreen] = useState(false);
 	const [controlsOpen, setControlsOpen] = useState(false);
+	/* the notice's answer: the game starts only once it is confirmed */
+	const [notice, setNotice] = useState(() => noticeConfirmed() ? "confirmed" : "pending");
 
 	useEffect(() => {
 		const update = () => setFullscreen(document.fullscreenElement === frame.current);
@@ -83,7 +85,14 @@ export default function App() {
 		<main className="page">
 			<div className="console">
 				<div ref={frame} className="screen">
-					<GameCanvas onStatus={setStatus} onNet={setNet} onLobby={setLobby} />
+					{notice === "confirmed" ?
+						<GameCanvas onStatus={setStatus} onNet={setNet} onLobby={setLobby} /> :
+						<OwnershipNotice denied={notice === "denied"} onAnswer={(answer) => {
+							if (answer === "confirmed") {
+								rememberNoticeConfirmed();
+							}
+							setNotice(answer);
+						}} />}
 					<MultiplayerMenu lobby={lobby} onClose={focusGame} />
 					<OnlineToast lobby={lobby} net={net} onClose={focusGame} />
 					{controlsOpen && <ControlsDialog onClose={() => { setControlsOpen(false); focusGame(); }} />}
@@ -103,6 +112,70 @@ export default function App() {
 				</div>
 			</div>
 		</main>
+	);
+}
+
+/* The ownership notice's Confirm, kept in the browser so that it is asked
+once (a new key when its text changes asks again). A Deny is not kept: the
+next visit asks again. Where the browser keeps nothing (storage blocked),
+the notice is asked at every visit. */
+const NOTICE_KEY = "halo-ownership-notice-v1";
+
+function noticeConfirmed() {
+	try {
+		return localStorage.getItem(NOTICE_KEY) === "confirmed";
+	} catch {
+		return false;
+	}
+}
+
+function rememberNoticeConfirmed() {
+	try {
+		localStorage.setItem(NOTICE_KEY, "confirmed");
+	} catch {
+		// (asked again at the next visit)
+	}
+}
+
+/* Before the game starts, until the player confirms: the site is a fan
+project, for those who own the original game. Deny, and the game never
+loads. */
+function OwnershipNotice({ denied, onAnswer }) {
+	if (denied) {
+		return (
+			<div className="overlay" role="alert">
+				<div className="panel">
+					<h2 className="panel-title">You are not allowed to use the site</h2>
+					<p className="panel-hint">
+						This site is only for people who own a copy of the original game.
+					</p>
+					<button type="button" className="text-button" onClick={() => onAnswer("pending")}>
+						Back to the notice
+					</button>
+				</div>
+			</div>
+		);
+	}
+
+	return (
+		<div className="overlay" role="dialog" aria-modal="true" aria-labelledby="notice-title"
+			aria-describedby="notice-text">
+			<div className="panel">
+				<h2 id="notice-title" className="panel-title">Before you play</h2>
+				<p id="notice-text" className="panel-hint">
+					This site is a non-commercial, open source project based on the{" "}
+					<a className="notice-link" href="https://github.com/cybersecurity/halo-ce-universal"
+						target="_blank" rel="noreferrer">Halo 1 decompilation project</a>.
+					To use the site, please certify that you own a copy of the original game.
+				</p>
+				<div className="notice-buttons">
+					<button type="button" className="secondary-button" onClick={() => onAnswer("denied")}>Deny</button>
+					<button type="button" className="primary-button" onClick={() => onAnswer("confirmed")} autoFocus>
+						Confirm
+					</button>
+				</div>
+			</div>
+		</div>
 	);
 }
 

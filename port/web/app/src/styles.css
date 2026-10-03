@@ -380,6 +380,17 @@ body {
 	outline-offset: 1px;
 }
 
+/* the ownership notice */
+.notice-link {
+	color: var(--text-strong);
+}
+
+.notice-buttons {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
 /* Controls */
 .panel-wide {
 	width: min(640px, 100%);
