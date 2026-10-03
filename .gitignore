@@ -36,3 +36,6 @@ dist/
 node_modules/
 .wrangler/
 .dev.vars*
+
+# Notes for agents (local only)
+AGENTS.md
