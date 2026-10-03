@@ -3,7 +3,7 @@ WORKER.JS
 
 Serves the browser build: the page (npm run build), halo.js and halo.wasm
 (ninja web) from the Worker's static assets (build/web), and the maps from an
-R2 bucket.
+R2 bucket. Network play's signalling, at /net/, is rooms.js's (NETWORK.md).
 
 Every response gets two things a plain file server does not give:
 
@@ -14,6 +14,10 @@ Every response gets two things a plain file server does not give:
   first asks for the size with HEAD and `Range: bytes=0-`, and reads in
   chunks only when the answer has Content-Length and `Accept-Ranges: bytes`.
 */
+
+import { handleRooms } from "./rooms.js";
+
+export { GameRoom } from "./rooms.js";
 
 const ISOLATION_HEADERS = {
 	"Cross-Origin-Opener-Policy": "same-origin",
@@ -27,6 +31,10 @@ export default {
 		url.pathname = url.pathname.replace(/\/{2,}/g, "/");
 		let response;
 
+		// a WebSocket's answer (101) goes as it is, without the headers below
+		if (url.pathname.startsWith("/net/")) {
+			return handleRooms(request, env, url);
+		}
 		if (request.method !== "GET" && request.method !== "HEAD") {
 			response = new Response("Method not allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
 		} else if (url.pathname.startsWith("/maps/")) {

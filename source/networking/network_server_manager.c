@@ -3000,6 +3000,12 @@ boolean server_has_enough_machines(
 boolean server_ok_to_countdown(
 	struct network_game_server *server)
 {
+#ifdef __EMSCRIPTEN__
+	/* port (browser build): a host starts its game alone, in any game type,
+	and the friends it invites join the game in progress
+	(port/web/NETWORK.md) */
+	return server_has_a_player_on_each_machine(server) && server->game.player_count >= 1;
+#endif
 	if (server_has_enough_machines(server) &&
 		server_has_a_player_on_each_machine(server) &&
 		!server_needs_more_teams(server) &&
@@ -3163,6 +3169,10 @@ boolean network_game_server_game_can_start(
 {
 	match_assert(NETWORK_SERVER_MANAGER_FILE, 0x782, server);
 
+#ifdef __EMSCRIPTEN__
+	/* port (browser build): alone, as server_ok_to_countdown */
+	return server->state == 0 && server->game.player_count >= 1;
+#endif
 	return server->state == 0 &&
 		server->game.player_count >= server->game.minimum_players;
 }

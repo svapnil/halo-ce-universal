@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .linux_build import (
-    GAME_FLAGS, KCP_DIR, LINUX_ABI_FLAGS, MBEDTLS_DIR, MINIUPNPC_DEFINES, MINIUPNPC_DIR, OPTIMISATION,
+    GAME_FLAGS, KCP_DIR, LINUX_ABI_FLAGS, MBEDTLS_DIR, OPTIMISATION,
     PLATFORM_FLAGS, PORT_CONFIG, PORT_DIR, POSIX_FLAGS, TOML_DIR, XDK_INCLUDE, _load_port_config,
-    game_defines_and_includes, game_sources, miniupnpc_sources, musl_math_cflags, musl_math_sources,
+    game_defines_and_includes, game_sources, musl_math_cflags, musl_math_sources,
     updater_defines, xdk_headers,
 )
 from .ninja_syntax import Writer
@@ -41,6 +41,9 @@ GLES_RENDERER_UNITS = {
 # port/web/src/web_game_shims.c instead.
 WEB_GAME_RENAMES: Dict[str, List[str]] = {
     "source/shell/shell_xbox.c": ["main=halo_main"],
+    # (the browser's online games run once a frame with the network tests:
+    # port/web/src/web_lobby.c)
+    "source/main/main.c": ["network_test_update=web_frame_update"],
     "source/cache/cache_files_windows.c": ["CreateThread=halo_web_create_thread_void"],
     "source/rasterizer/xbox/rasterizer_xbox_text.c": [
         "rasterizer_set_texture_bitmap_data=halo_web_rasterizer_set_texture_bitmap_data"],
@@ -49,6 +52,26 @@ WEB_GAME_RENAMES: Dict[str, List[str]] = {
     "source/rasterizer/xbox/rasterizer_xbox_plasma_energy.c": [
         "rasterizer_set_texture=halo_web_rasterizer_set_texture"],
 }
+
+# Network play (port/web/NETWORK.md, "The game's side"). The game and
+# xnet.c stay as they are; under them, the browser build has its own:
+#  - sockets: web_net.c's posix_socket_* (in this page's memory). posix_net.c
+#    keeps its other functions, with these renamed out of the way;
+#  - internet play: web_p2p.c's p2p.h, in place of the desktop's units here
+#    (MQTT, STUN, UPnP, Discord: none of them reach a browser). KCP and
+#    miniupnpc, which only they use, are left out too.
+WEB_NET_FUNCTIONS = [
+    "posix_socket_last_error", "posix_socket", "posix_socket_close", "posix_socket_bind", "posix_socket_connect",
+    "posix_socket_listen", "posix_socket_accept", "posix_socket_send", "posix_socket_sendto", "posix_socket_recv",
+    "posix_socket_recvfrom", "posix_socket_shutdown", "posix_socket_set_nonblocking", "posix_socket_bytes_available",
+    "posix_socket_set_nodelay", "posix_socket_setsockopt", "posix_socket_getsockopt", "posix_socket_getsockname",
+    "posix_socket_getpeername", "posix_socket_select", "posix_local_ipv4_address",
+]
+DESKTOP_INTERNET_PLAY_UNITS = {"p2p.c", "p2p_signal.c", "p2p_crypto.c", "p2p_discord.c", "posix_upnp.c"}
+# the browser's units with the host ABI, as posix_*.c (they implement posix.h),
+# and those with the game's (they call it, as port/linux/game's do)
+WEB_POSIX_UNITS = {"web_net.c"}
+WEB_GAME_UNITS = {"web_lobby.c"}
 
 # The page, its threads and its memory:
 #  - the game runs on a worker (PROXY_TO_PTHREAD) and draws on the canvas
@@ -67,6 +90,8 @@ WEB_LINK_FLAGS = [
     "-sJSPI=1",
     "-sWASMFS=1",
     "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=256MB", "-sMAXIMUM_MEMORY=4GB", "-sSTACK_SIZE=4MB",
+    # the page's network bridge reads web_p2p.c's rings (app/src/net_bridge.js)
+    "-sEXPORTED_RUNTIME_METHODS=HEAPU8",
 ]
 
 
@@ -162,11 +187,14 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     posix_abi = [flag for flag in POSIX_FLAGS if flag not in NOT_WEB_FLAGS] + ["-pthread", "--use-port=sdl3"]
     posix_cflags = " ".join(posix_abi + [f"-I{platform_dir}"])
     mbedtls_include = f"-I{MBEDTLS_DIR / 'include'}"
+    native_sockets = " ".join(f"-D{name}=posix_native_{name[len('posix_'):]}" for name in WEB_NET_FUNCTIONS)
     for source in sorted(platform_dir.glob("*.c")):
+        if source.name in DESKTOP_INTERNET_PLAY_UNITS:
+            continue
         if source.name == "posix_update.c":
             add_object(source, f"{posix_cflags} {mbedtls_include}")
-        elif source.name == "posix_upnp.c":
-            add_object(source, f"{posix_cflags} -I{MINIUPNPC_DIR / 'include'} -DMINIUPNP_STATICLIB")
+        elif source.name == "posix_net.c":
+            add_object(source, f"{posix_cflags} {native_sockets}")
         elif source.name.startswith("posix_"):
             add_object(source, posix_cflags)
         elif source.name == "updater.c":
@@ -178,15 +206,16 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     for source in embedded_assets:
         add_object(source, platform_cflags)
     for source in sorted((WEB_DIR / "src").glob("*.c")):
-        add_object(source, platform_cflags)
+        if source.name in WEB_POSIX_UNITS:
+            add_object(source, posix_cflags)
+        elif source.name in WEB_GAME_UNITS:
+            add_object(source, game_cflags)
+        else:
+            add_object(source, platform_cflags)
     for source in sorted((MBEDTLS_DIR / "library").glob("*.c")):
         add_object(source, " ".join(posix_abi + [mbedtls_include, f"-I{MBEDTLS_DIR / 'library'}",
                                                  "-fno-builtin-wcslen", "-w"]))
-    for source in miniupnpc_sources():
-        add_object(source, " ".join(posix_abi + [*MINIUPNPC_DEFINES, f"-I{MINIUPNPC_DIR / 'include'}",
-                                                 f"-I{MINIUPNPC_DIR / 'src'}", "-fno-builtin-wcslen", "-w"]))
     add_object(TOML_DIR / "tomlc17.c", " ".join([abi, "-std=gnu11", "-w"]))
-    add_object(KCP_DIR / "ikcp.c", " ".join([abi, "-std=gnu11", "-w"]))
     for source in musl_math_sources():
         add_object(source, musl_math_cflags(abi))
 
