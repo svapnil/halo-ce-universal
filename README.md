@@ -96,7 +96,7 @@ To build the game:
 | `ninja linux` | `build/linux/halo` |
 | `ninja windows` (on Windows) | `build/windows/halo.exe` and `SDL3.dll` |
 | `ninja android_apk` | `port/android/app/build/outputs/apk/debug/app-debug.apk` |
-| `ninja web` | `build/web/halo.html`, `halo.js` and `halo.wasm` |
+| `ninja web` | `build/web/halo.js` and `halo.wasm` (the page: `npm run build` in port/web) |
 
 If you enter `ninja` without a target, ninja builds the game for the
 computer that you use.

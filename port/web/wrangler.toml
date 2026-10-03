@@ -13,8 +13,9 @@ routes = [
 ]
 workers_dev = true
 
-# halo.html, halo.js and halo.wasm, as `ninja web` writes them (its
-# .assetsignore leaves out the object files). The worker answers every request
+# halo.js and halo.wasm, as `ninja web` writes them, and the page, as
+# `npm run build` writes it (ninja web's .assetsignore leaves out the object
+# files). The worker answers every request
 # first, so that every response gets the cross-origin isolation headers.
 [assets]
 directory = "../../build/web"
