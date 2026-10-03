@@ -1,0 +1,103 @@
+:root {
+	color-scheme: dark;
+	--page: #0b0d10;
+	--frame: #15181d;
+	--edge: #2a2f37;
+	--text: #9aa3ad;
+	--text-strong: #e6e9ed;
+	--bar-height: 40px;
+	/* the box: 4:3, at most 960 x 720, smaller when the window is */
+	--screen-width: min(960px, calc(100vw - 32px), calc((100vh - var(--bar-height) - 48px) * 4 / 3));
+}
+
+html, body, #root {
+	margin: 0;
+	height: 100%;
+}
+
+body {
+	background: var(--page);
+	color: var(--text);
+	font: 13px/1.4 system-ui, sans-serif;
+	overflow: hidden;
+}
+
+.page {
+	display: grid;
+	place-items: center;
+	height: 100%;
+}
+
+.console {
+	width: var(--screen-width);
+	border: 1px solid var(--edge);
+	border-radius: 6px;
+	background: var(--frame);
+	overflow: hidden;
+	box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+}
+
+.screen {
+	position: relative;
+	aspect-ratio: 4 / 3;
+	background: #000;
+}
+
+.game-canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+	outline: none;
+}
+
+/* fullscreen: the box fills the screen; the picture stays 4:3 */
+.screen:fullscreen {
+	aspect-ratio: auto;
+	display: grid;
+	place-items: center;
+}
+
+.screen:fullscreen .game-canvas {
+	width: min(100vw, calc(100vh * 4 / 3));
+	height: min(100vh, calc(100vw * 3 / 4));
+}
+
+.bar {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: var(--bar-height);
+	padding: 0 6px 0 12px;
+	border-top: 1px solid var(--edge);
+}
+
+.status {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.bar-button {
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: none;
+	color: var(--text);
+	cursor: pointer;
+}
+
+.bar-button:hover {
+	background: var(--edge);
+	color: var(--text-strong);
+}
+
+.bar-button:focus-visible {
+	outline: 2px solid var(--text-strong);
+	outline-offset: 1px;
+}

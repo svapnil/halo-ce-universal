@@ -1,14 +1,21 @@
 {
   "name": "halo-ce-web",
   "private": true,
-  "description": "Serves the browser build (ninja web) with Cloudflare Workers: wrangler dev locally, wrangler deploy to Cloudflare",
+  "description": "The browser build's page (app/, Vite and React) and its server (Cloudflare Workers): wrangler dev locally, wrangler deploy to Cloudflare",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "build": "vite build",
+    "dev": "vite build && wrangler dev",
+    "deploy": "vite build && wrangler deploy",
     "upload-maps": "node upload_maps.mjs"
   },
   "devDependencies": {
+    "@vitejs/plugin-react": "^6.1.1",
+    "vite": "^8.3.2",
     "wrangler": "^4.146.0"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   }
 }

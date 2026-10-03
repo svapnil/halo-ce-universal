@@ -2,7 +2,7 @@
 
 It compiles the same units as the native Linux build (tools/linux_build.py)
 with Emscripten for WebAssembly, adds ``port/web/src``, and links
-``build/web/halo.html`` with ``halo.js`` and ``halo.wasm``. WebAssembly
+``build/web/halo.js`` and ``halo.wasm``. WebAssembly
 (wasm32) has 32-bit pointers, as the game's data needs. See
 port/web/README.md for the design; the worker in port/web/worker serves the
 build (port/web/wrangler.toml).
@@ -67,7 +67,6 @@ WEB_LINK_FLAGS = [
     "-sJSPI=1",
     "-sWASMFS=1",
     "-sALLOW_MEMORY_GROWTH=1", "-sINITIAL_MEMORY=256MB", "-sMAXIMUM_MEMORY=4GB", "-sSTACK_SIZE=4MB",
-    f"--shell-file={WEB_DIR / 'shell.html'}",
 ]
 
 
@@ -83,7 +82,8 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     linux_dir: Path = sln.build_dir / "linux"
     build_dir: Path = sln.build_dir / "web"
     obj_dir = build_dir / "obj"
-    output = build_dir / "halo.html"
+    # the page is port/web/app (Vite and React), which loads halo.js
+    output = build_dir / "halo.js"
     release = getattr(sln, "port_release", False)
 
     # the generated headers and assets of the Linux build, which are the same
@@ -195,8 +195,7 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         outputs=output,
         rule="web_link",
         inputs=objects,
-        implicit=[WEB_DIR / "shell.html"],
-        implicit_outputs=[build_dir / "halo.js", build_dir / "halo.wasm"],
+        implicit_outputs=[build_dir / "halo.wasm"],
         variables={"ldflags": " ".join(ldflags)},
     )
     # the worker serves build/web as its static assets (port/web/wrangler.toml), which

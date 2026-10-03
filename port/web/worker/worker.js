@@ -1,8 +1,9 @@
 /*
 WORKER.JS
 
-Serves the browser build (ninja web): the page, halo.js and halo.wasm from the
-Worker's static assets (build/web), and the maps from an R2 bucket.
+Serves the browser build: the page (npm run build), halo.js and halo.wasm
+(ninja web) from the Worker's static assets (build/web), and the maps from an
+R2 bucket.
 
 Every response gets two things a plain file server does not give:
 
@@ -32,7 +33,7 @@ export default {
 			response = await serveMap(request, env, url.pathname.slice(1));
 		} else {
 			if (url.pathname === "/") {
-				url.pathname = "/halo.html";
+				url.pathname = "/index.html";
 				request = new Request(url, request);
 			}
 			response = await env.ASSETS.fetch(request);
