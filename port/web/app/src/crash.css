@@ -1,0 +1,21 @@
+/* the panel shown when the game stops (CrashPanel.jsx) */
+.crash {
+	z-index: 10;
+}
+
+.crash-detail {
+	margin: 0;
+	padding: 8px 10px;
+	border: 1px solid var(--edge);
+	border-radius: 4px;
+	background: var(--page);
+	color: var(--text);
+	font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+	font-size: 12px;
+	overflow-wrap: anywhere;
+}
+
+.crash-buttons {
+	display: flex;
+	gap: 8px;
+}

@@ -30,6 +30,8 @@ itself and drop the links: the first version of this file did.
 #include <unistd.h>
 
 int halo_main(void);
+/* web_crash.c's */
+void web_crash_exited(int code);
 /* (sys/stat.h's: the game's include paths hide it) */
 int mkdir(const char *path, unsigned int mode);
 
@@ -170,5 +172,11 @@ int main(int argc, char **argv)
 	(xbox_files.c) */
 	chdir(WEB_DATA_ROOT);
 	printf("web: the maps are read from the server as the game needs them\n");
-	return halo_main();
+	{
+		/* (the page is told that the game ended, its Quit: web_crash.c) */
+		int code = halo_main();
+
+		web_crash_exited(code);
+		return code;
+	}
 }
