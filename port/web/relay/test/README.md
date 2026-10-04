@@ -54,6 +54,23 @@ the session's port. `node port/web/relay/test/probe_ports.mjs
 https://openhaloce.com 32` (spaced for the Worker's 10 tokens a minute:
 about 3½ minutes).
 
+`walk.mjs` walks the game's menus as a player does, with keys and
+screenshots (the PC menus' online screens). For example, the live site's
+server browser, and into its first game (a game under way asks for JOIN
+GAME again, on its preview):
+
+```
+node port/web/relay/test/walk.mjs https://openhaloce.com/ 40 click:640,300 \
+  ArrowDown Enter wait:2 Enter wait:3 Enter wait:12 shot:list.png \
+  ArrowRight Enter wait:8 Enter wait:40 shot:playing.png
+```
+
+(Multiplayer; Done, on a first visit's profile name; Server Browser; JOIN
+GAME. Clicks do not reach the game's pointer in a headless Chrome: use the
+keys.) On 2026-10-04 that joined a desktop build's public game of 18
+players, through the Fly.io relay: about 45 datagrams and 37 KiB a second
+from the host, none of its tunnel packets missing.
+
 `drive.mjs` opens several pages in one browser with `|` between their
 addresses, for the browsers' own test (`?net=tabs`, `NETWORK.md`,
 "Testing").
