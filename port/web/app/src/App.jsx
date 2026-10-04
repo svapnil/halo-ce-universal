@@ -196,7 +196,8 @@ function useReleasedPointer(active) {
 /* The page's Multiplayer menu, over the game's when it opens (the game's
 stays behind it, for split screen and local games): host an online game,
 which starts at once or waits in the game's lobby for friends, or join a
-friend's with their invite. */
+friend's with their invite: a browser's, or a desktop game's (native games:
+NETWORK.md). */
 function MultiplayerMenu({ lobby, onClose }) {
 	const [open, setOpen] = useState(false);
 	const [map, setMap] = useState(MAPS[0][0]);
@@ -283,7 +284,7 @@ function MultiplayerMenu({ lobby, onClose }) {
 					<h3>Join a friend</h3>
 					<div className="join-row">
 						<input type="text" value={invite} onChange={(event) => setInvite(event.target.value)}
-							placeholder="Paste an invite link" aria-label="Invite link" spellCheck={false} />
+							placeholder="Paste an invite link (browser or desktop game)" aria-label="Invite link" spellCheck={false} />
 						<button type="submit" className="secondary-button" disabled={!invite.trim()}>Join</button>
 					</div>
 				</form>
@@ -447,6 +448,11 @@ function NetStatus({ net }) {
 		/* (the host's game is then in Multiplayer, System Link) */
 		joined: "Connected to the host",
 		error: `Network: ${net.error}`,
+		/* native games, through the relay (relay_bridge.js) */
+		"relay-connecting": "Reaching the relay…",
+		"relay-connected": "Relay connected",
+		"relay-disconnected": "Relay lost: reconnecting…",
+		"relay-error": `Relay: ${net.error}`,
 	}[net.state];
 
 	function copy() {

@@ -1,0 +1,264 @@
+# The relay of native games (main.go; port/web/NETWORK.md, "Native games")
+# on Fly.io. In this folder:
+#
+#   fly apps create <app>                   (and set `app` below)
+#   fly ips allocate-v4 --yes               a dedicated IPv4: Fly takes UDP
+#                                           only on one (not shared, not IPv6);
+#                                           RELAY_PUBLIC_IP below is it
+#   fly secrets set RELAY_TOKEN_SECRET=...  the Worker's too (worker/relay.js)
+#   fly deploy
+#
+# Then wrangler.toml's RELAY_URL is wss://<app>.fly.dev/.
+#
+# ONE machine: the WebSocket reaches the machine of the page's region, but a
+# peer's UDP reaches the dedicated IP's nearest machine, which must be the
+# one holding the page's sockets. More regions: an app (and IP) for each, and
+# the Worker gives each page the nearest's address.
+
+app = "halo-web-relay"
+primary_region = "iad"
+
+[env]
+  PORT = "8790"
+  # Fly routes UDP only to sockets bound to fly-global-services, on the
+  # ports below (it does not translate them), and replies from there go out
+  # from the dedicated IP, so the relay's sockets are reached as they are
+  RELAY_UDP_HOST = "fly-global-services"
+  RELAY_UDP_PORTS = "40000-40031"
+  # the dedicated IPv4 (`fly ips list`): what leaves the machine goes out
+  # from its egress address, which STUN sees, but only this takes UDP in, so
+  # the relay tells pages this one in STUN's answers
+  RELAY_PUBLIC_IP = "109.105.217.218"
+  RELAY_ORIGINS = "https://openhaloce.com,https://www.openhaloce.com"
+  # each session's numbers every 5 seconds (`fly logs`): round trip, traffic,
+  # tunnel loss, refusals; while native games are new
+  RELAY_REPORT = "1"
+
+[deploy]
+  strategy = "immediate"
+
+# the pages' WebSockets (TLS at Fly's edge), and /healthz
+[[services]]
+  internal_port = 8790
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [services.concurrency]
+    type = "connections"
+    soft_limit = 300
+    hard_limit = 400
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "get"
+    path = "/healthz"
+    protocol = "http"
+
+# the sessions' UDP sockets, one port each (RELAY_UDP_PORTS): Fly routes UDP
+# only to ports listed one by one (a start_port/end_port range takes none in),
+# each its own service. 32 ports: 32 pages in native games at once. More:
+# more blocks, and RELAY_UDP_PORTS to match.
+
+[[services]]
+  internal_port = 40000
+  protocol = "udp"
+  [[services.ports]]
+    port = 40000
+
+[[services]]
+  internal_port = 40001
+  protocol = "udp"
+  [[services.ports]]
+    port = 40001
+
+[[services]]
+  internal_port = 40002
+  protocol = "udp"
+  [[services.ports]]
+    port = 40002
+
+[[services]]
+  internal_port = 40003
+  protocol = "udp"
+  [[services.ports]]
+    port = 40003
+
+[[services]]
+  internal_port = 40004
+  protocol = "udp"
+  [[services.ports]]
+    port = 40004
+
+[[services]]
+  internal_port = 40005
+  protocol = "udp"
+  [[services.ports]]
+    port = 40005
+
+[[services]]
+  internal_port = 40006
+  protocol = "udp"
+  [[services.ports]]
+    port = 40006
+
+[[services]]
+  internal_port = 40007
+  protocol = "udp"
+  [[services.ports]]
+    port = 40007
+
+[[services]]
+  internal_port = 40008
+  protocol = "udp"
+  [[services.ports]]
+    port = 40008
+
+[[services]]
+  internal_port = 40009
+  protocol = "udp"
+  [[services.ports]]
+    port = 40009
+
+[[services]]
+  internal_port = 40010
+  protocol = "udp"
+  [[services.ports]]
+    port = 40010
+
+[[services]]
+  internal_port = 40011
+  protocol = "udp"
+  [[services.ports]]
+    port = 40011
+
+[[services]]
+  internal_port = 40012
+  protocol = "udp"
+  [[services.ports]]
+    port = 40012
+
+[[services]]
+  internal_port = 40013
+  protocol = "udp"
+  [[services.ports]]
+    port = 40013
+
+[[services]]
+  internal_port = 40014
+  protocol = "udp"
+  [[services.ports]]
+    port = 40014
+
+[[services]]
+  internal_port = 40015
+  protocol = "udp"
+  [[services.ports]]
+    port = 40015
+
+[[services]]
+  internal_port = 40016
+  protocol = "udp"
+  [[services.ports]]
+    port = 40016
+
+[[services]]
+  internal_port = 40017
+  protocol = "udp"
+  [[services.ports]]
+    port = 40017
+
+[[services]]
+  internal_port = 40018
+  protocol = "udp"
+  [[services.ports]]
+    port = 40018
+
+[[services]]
+  internal_port = 40019
+  protocol = "udp"
+  [[services.ports]]
+    port = 40019
+
+[[services]]
+  internal_port = 40020
+  protocol = "udp"
+  [[services.ports]]
+    port = 40020
+
+[[services]]
+  internal_port = 40021
+  protocol = "udp"
+  [[services.ports]]
+    port = 40021
+
+[[services]]
+  internal_port = 40022
+  protocol = "udp"
+  [[services.ports]]
+    port = 40022
+
+[[services]]
+  internal_port = 40023
+  protocol = "udp"
+  [[services.ports]]
+    port = 40023
+
+[[services]]
+  internal_port = 40024
+  protocol = "udp"
+  [[services.ports]]
+    port = 40024
+
+[[services]]
+  internal_port = 40025
+  protocol = "udp"
+  [[services.ports]]
+    port = 40025
+
+[[services]]
+  internal_port = 40026
+  protocol = "udp"
+  [[services.ports]]
+    port = 40026
+
+[[services]]
+  internal_port = 40027
+  protocol = "udp"
+  [[services.ports]]
+    port = 40027
+
+[[services]]
+  internal_port = 40028
+  protocol = "udp"
+  [[services.ports]]
+    port = 40028
+
+[[services]]
+  internal_port = 40029
+  protocol = "udp"
+  [[services.ports]]
+    port = 40029
+
+[[services]]
+  internal_port = 40030
+  protocol = "udp"
+  [[services.ports]]
+    port = 40030
+
+[[services]]
+  internal_port = 40031
+  protocol = "udp"
+  [[services.ports]]
+    port = 40031
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
