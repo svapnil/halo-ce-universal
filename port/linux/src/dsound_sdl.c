@@ -30,6 +30,10 @@ audio.volume sets the master volume (default 1.0); audio.enabled = false
 skips opening a device (port_config.c).
 */
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <stdio.h>
+#endif
 #include "platform.h"
 #include "sdl_platform.h"
 #include "port_config.h"
@@ -718,10 +722,66 @@ ULONG WINAPI IDirectSound_Release(LPDIRECTSOUND sound)
 	return direct_sound.reference_count ? --direct_sound.reference_count : 0;
 }
 
+#ifdef __EMSCRIPTEN__
+/* The browser build: the page's volume control (port/web/app/src/App.jsx),
+which is audio.volume, as Settings' MASTER VOLUME is. The page runs on the
+browser's thread: what it asks is taken up on the game's
+(DirectSoundDoWork), where the config's file I/O may be. It asks a
+percentage, with WEB_VOLUME_KEEP once the control has come to rest: the
+mixer follows the control as it moves, and config.toml (which the browser
+keeps: port/web/src/web_main.c) is written once. */
+#define WEB_VOLUME_KEEP 0x100
+
+static int web_volume_request = -1;
+/* the volume the page has, a percentage: it is told of any other (the
+game's own as it starts, and what Settings changes it to) */
+static int web_volume_known = -1;
+
+EMSCRIPTEN_KEEPALIVE void web_set_volume(int percent, int keep)
+{
+	percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+	__atomic_store_n(&web_volume_request, percent | (keep ? WEB_VOLUME_KEEP : 0), __ATOMIC_RELEASE);
+}
+
+static void web_volume_take_request(void)
+{
+	int request = __atomic_exchange_n(&web_volume_request, -1, __ATOMIC_ACQUIRE);
+
+	if (request < 0)
+		return;
+	web_volume_known = request & ~WEB_VOLUME_KEEP;
+	master_volume = (float)web_volume_known / 100.0f;
+	if (request & WEB_VOLUME_KEEP)
+	{
+		char text[16];
+
+		snprintf(text, sizeof(text), "%.2f", master_volume);
+		if (!config_write("audio.volume", text))
+			platform_log("audio: could not write audio.volume to config.toml");
+	}
+}
+
+static void web_volume_tell_page(void)
+{
+	int percent = (int)lroundf(master_volume * 100.0f);
+
+	percent = percent < 0 ? 0 : percent > 100 ? 100 : percent;
+	if (percent == web_volume_known)
+		return;
+	web_volume_known = percent;
+	MAIN_THREAD_ASYNC_EM_ASM({
+		window.dispatchEvent(new CustomEvent("halo-volume", { detail: $0 }));
+	}, percent);
+}
+#endif
+
 VOID WINAPI DirectSoundDoWork(void)
 {
 	static unsigned long volume_read_at = (unsigned long)-1;
 
+#ifdef __EMSCRIPTEN__
+	web_volume_take_request();
+#endif
 	/* (audio.volume read again when Settings changes it: on the game's
 	thread, not the mixer's, whose lock the config's file I/O would hold) */
 	if (volume_read_at != config_changes())
@@ -729,6 +789,9 @@ VOID WINAPI DirectSoundDoWork(void)
 		volume_read_at = config_changes();
 		master_volume = (float)config_real("audio.volume");
 	}
+#ifdef __EMSCRIPTEN__
+	web_volume_tell_page();
+#endif
 	streams_complete_finished();
 }
 

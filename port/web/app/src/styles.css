@@ -102,6 +102,37 @@ body {
 	outline-offset: 1px;
 }
 
+.bar-button:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.bar-button:disabled:hover {
+	background: none;
+	color: var(--text);
+}
+
+/* the game's volume: its icon, and the slider a click on it shows */
+.volume {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+}
+
+.volume-slider {
+	width: 72px;
+	height: 16px;
+	margin: 0;
+	accent-color: var(--text-strong);
+	cursor: pointer;
+}
+
+.volume-slider:focus-visible {
+	outline: 2px solid var(--text-strong);
+	outline-offset: 2px;
+}
+
 .net {
 	display: flex;
 	align-items: center;

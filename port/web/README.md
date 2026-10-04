@@ -73,7 +73,9 @@ errors and the draw counts in the console.
 Saves: the game's save drives (`z:`, `u:` and `t:`: player profiles,
 playlists, the checkpoint) and its settings (`config.toml`, which the
 game's Settings change: the keys, the video, the audio) are kept in the browser's Origin Private File
-System (`web_main.c`), so they are still there at the next visit. The site's
+System (`web_main.c`), so they are still there at the next visit. The volume
+control in the page's bar is one of those settings (`audio.volume`, Settings >
+Audio's MASTER VOLUME: `dsound_sdl.c`'s `web_set_volume`). The site's
 data in the browser's settings holds them; clearing it starts afresh. Where
 the browser has no such storage (some private windows), the page says so and
 the saves last for the visit only. A game joined from an invite link uses

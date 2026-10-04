@@ -51,6 +51,9 @@ export default function App() {
 	const [lobby, setLobby] = useState({ phase: "other", message: "" });
 	const [fullscreen, setFullscreen] = useState(false);
 	const [controlsOpen, setControlsOpen] = useState(false);
+	/* the game's volume, a percentage: null until the game tells it */
+	const [volume, setVolume] = useState(null);
+	const volumeKept = useRef(null);
 	/* the notice's answer: the game starts only once it is confirmed */
 	const [notice, setNotice] = useState(() => noticeConfirmed() ? "confirmed" : "pending");
 
@@ -61,11 +64,28 @@ export default function App() {
 		-1 switch): the page's fullscreen, as the button's */
 		const fromGame = (event) => setPageFullscreen(event.detail);
 		window.addEventListener("halo-fullscreen", fromGame);
+		/* the game's volume, as it starts and when its Settings change it
+		(dsound_sdl.c's web_volume_tell_page) */
+		const volumeFromGame = (event) => setVolume(event.detail);
+		window.addEventListener("halo-volume", volumeFromGame);
 		return () => {
 			document.removeEventListener("fullscreenchange", update);
 			window.removeEventListener("halo-fullscreen", fromGame);
+			window.removeEventListener("halo-volume", volumeFromGame);
 		};
 	}, []);
+
+	/* The bar's volume is the game's own: config.toml's audio.volume, which
+	the game's Settings > Audio shows as MASTER VOLUME and the browser keeps
+	with the saves (web_main.c). The game follows the control as it moves,
+	and writes its settings once the control has come to rest (dsound_sdl.c's
+	web_set_volume). */
+	function changeVolume(percent) {
+		setVolume(percent);
+		window.Module?._web_set_volume?.(percent, 0);
+		clearTimeout(volumeKept.current);
+		volumeKept.current = setTimeout(() => window.Module?._web_set_volume?.(percent, 1), VOLUME_KEEP_DELAY);
+	}
 
 	/* on: true, false, or -1 to switch */
 	function setPageFullscreen(on) {
@@ -108,6 +128,7 @@ export default function App() {
 					<span className="status">{status}</span>
 					<NetStatus net={net} />
 					<SaveLogButton />
+					<VolumeControl volume={volume} onChange={changeVolume} onDone={focusGame} />
 					<button type="button" className="bar-button" onClick={() => setControlsOpen(!controlsOpen)}
 						aria-label="Controls" aria-expanded={controlsOpen} title="Controls">
 						<ControlsIcon />
@@ -120,6 +141,60 @@ export default function App() {
 				</div>
 			</div>
 		</main>
+	);
+}
+
+/* how long the volume control rests before the game writes its settings
+(ms) */
+const VOLUME_KEEP_DELAY = 300;
+
+/* The bar's volume: an icon, which shows how loud the game is. A click on it
+shows the slider, until another click on it, a click elsewhere or Esc.
+Without a volume yet (the game has not started), there is none to change. */
+function VolumeControl({ volume, onChange, onDone }) {
+	const control = useRef(null);
+	const [open, setOpen] = useState(false);
+	const known = volume !== null;
+
+	useEffect(() => {
+		if (!open) {
+			return undefined;
+		}
+		/* (as the click goes down, before the game's canvas has it) */
+		const outside = (event) => !control.current.contains(event.target) && setOpen(false);
+		document.addEventListener("pointerdown", outside, true);
+		return () => document.removeEventListener("pointerdown", outside, true);
+	}, [open]);
+
+	function close() {
+		setOpen(false);
+		onDone();
+	}
+
+	return (
+		<div ref={control} className="volume"
+			onKeyDown={(event) => {
+				/* (the game takes the window's keys: these are the control's) */
+				event.stopPropagation();
+				if (event.key === "Escape" && open) {
+					close();
+				}
+			}}
+			onKeyUp={(event) => event.stopPropagation()}>
+			{/* (to the icon's left: the icon stays where it was clicked) */}
+			{open && (
+				<input type="range" className="volume-slider" min="0" max="100" step="1" value={volume}
+					onChange={(event) => onChange(Number(event.target.value))}
+					// (the keyboard back to the game once the mouse lets go)
+					onPointerUp={onDone}
+					aria-label="Volume" title={`Volume: ${volume}%`} autoFocus />
+			)}
+			<button type="button" className="bar-button" onClick={() => open ? close() : setOpen(true)}
+				disabled={!known} aria-label="Volume" aria-expanded={open}
+				title={known ? `Volume: ${volume}%` : "Volume"}>
+				<VolumeIcon volume={volume ?? 100} />
+			</button>
+		</div>
 	);
 }
 
@@ -387,6 +462,18 @@ function ControlsIcon() {
 		<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
 			<rect x="2" y="6" width="20" height="12" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
 			<path d="M6 10h1M10 10h1M14 10h1M18 10h1M7 14h10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+		</svg>
+	);
+}
+
+function VolumeIcon({ volume }) {
+	return (
+		<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+			<path d="M3 9.5h3.5L11 6v12l-4.5-3.5H3z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+			{volume === 0 ?
+				<path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /> :
+				<path d={volume < 50 ? "M15 9.5a3.5 3.5 0 0 1 0 5" : "M15 9.5a3.5 3.5 0 0 1 0 5M17.5 6.5a7.5 7.5 0 0 1 0 11"}
+					fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
 		</svg>
 	);
 }
