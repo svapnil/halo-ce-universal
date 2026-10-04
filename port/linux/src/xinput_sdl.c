@@ -59,6 +59,8 @@ drive the controller.
 
 /* main/console.c */
 extern unsigned char console_is_active(void);
+/* interface/virtual_keyboard.c */
+extern unsigned char virtual_keyboard_active(void);
 
 /* ---------- device tables */
 
@@ -227,6 +229,18 @@ static void text_typing_update(void)
 	text_typing = typing;
 }
 
+/* the on-screen keyboard tells that it is up only while it is
+(virtual_keyboard_process runs then alone): once it is gone, its typing is
+over, else Enter would stay Start and space nothing, in every menu after */
+static void text_typing_refresh(void)
+{
+	if (text_typing_keyboard && !virtual_keyboard_active())
+	{
+		text_typing_keyboard = FALSE;
+		text_typing_update();
+	}
+}
+
 void platform_text_typing(int typing)
 {
 	text_typing_keyboard = typing != 0;
@@ -262,6 +276,7 @@ static void keyboard_gamepad(const struct platform_input_state *input, XINPUT_GA
 	const unsigned char *m = input->mouse_buttons;
 	int x = 0, y = 0;
 
+	text_typing_refresh();
 	if (text_typing)
 	{
 		typing_gamepad(input, pad);
@@ -876,6 +891,7 @@ DWORD WINAPI XInputDebugGetKeystroke(PXINPUT_DEBUG_KEYSTROKE keystroke)
 	struct platform_keystroke next;
 
 	memset(keystroke, 0, sizeof(*keystroke));
+	text_typing_refresh();
 	while (platform_next_keystroke(&next))
 	{
 		BOOL key_up = (next.flags & XINPUT_DEBUG_KEYSTROKE_FLAG_KEYUP) != 0;
