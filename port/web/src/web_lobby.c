@@ -35,6 +35,8 @@ and raises and notifies event_sequence (Atomics.waitAsync on the page).
 #include <string.h>
 
 void network_test_update(boolean main_menu_loaded, real seconds);
+/* web_crash.c's: the game lives (a frame) */
+void web_crash_frame(void);
 /* (port/linux/src/platform.h's and port_config.h's, which the game's units
 do not include) */
 void platform_log(char const *format, ...);
@@ -248,6 +250,7 @@ static void web_lobby_update(boolean main_menu_loaded, real seconds)
 /* main.c's, once a frame (tools/web_build.py renames its call) */
 void web_frame_update(boolean main_menu_loaded, real seconds)
 {
+	web_crash_frame();
 	network_test_update(main_menu_loaded, seconds);
 	web_lobby_update(main_menu_loaded, seconds);
 }

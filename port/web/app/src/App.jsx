@@ -1,5 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { CrashPanel, SaveLogButton } from "./CrashPanel.jsx";
 import { startGame } from "./game.js";
+import { keepFromBrowser } from "./keys.js";
 
 /* The game's canvas. It never re-renders: the game owns it once started
 (game.js). */
@@ -22,7 +24,7 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
 				event.currentTarget.focus();
 				captureMouse(event.currentTarget);
 			}}
-			onKeyDown={(event) => GAME_KEYS.has(event.code) && event.preventDefault()}
+			onKeyDown={(event) => keepFromBrowser(event) && event.preventDefault()}
 			// the keyboard back from a panel over the game, which kept the
 			// releases of keys pressed before it (sdl_platform.c's
 			// web_reset_keyboard); not there before the game has started
@@ -30,16 +32,6 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
 		/>
 	);
 }, () => true);
-
-/* The game's keys that the browser also acts on (Tab leaves the canvas,
-Space and the arrows scroll, F1 opens help, F11 makes the browser's window
-fullscreen). SDL means to keep them from the browser, but it sees them on
-the game's thread, after the browser has acted: the canvas keeps them
-itself. (The game still gets them: its F11 asks for the page's fullscreen,
-as the button does: sdl_platform.c's web_page_fullscreen.) */
-const GAME_KEYS = new Set([
-	"Tab", "Space", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "F1", "F11",
-]);
 
 /* the pointer lock back at a click on the game, while the game wants the
 mouse (sdl_platform.c's web_mouse_wants_capture): only a request in the
@@ -109,18 +101,20 @@ export default function App() {
 							setNotice(answer);
 						}} />}
 					<OnlineToast lobby={lobby} net={net} onClose={focusGame} />
+					<CrashPanel />
 					{controlsOpen && <ControlsDialog onClose={() => { setControlsOpen(false); focusGame(); }} />}
 				</div>
 				<div className="bar">
 					<span className="status">{status}</span>
 					<NetStatus net={net} />
+					<SaveLogButton />
 					<button type="button" className="bar-button" onClick={() => setControlsOpen(!controlsOpen)}
 						aria-label="Controls" aria-expanded={controlsOpen} title="Controls">
 						<ControlsIcon />
 					</button>
 					<button type="button" className="bar-button" onClick={toggleFullscreen}
 						aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-						title={fullscreen ? "Exit fullscreen (Esc, F11)" : "Fullscreen (F11)"}>
+						title={fullscreen ? "Exit fullscreen (F11, or hold Esc)" : "Fullscreen (F11): the game takes every key"}>
 						{fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
 					</button>
 				</div>
@@ -239,6 +233,8 @@ const PAGE_CONTROLS = [
 	["Aim with the mouse", ["Click the game"]],
 	["Free the mouse", ["Esc"]],
 	["Fullscreen", ["F11"]],
+	["Leave fullscreen", ["F11", "Hold Esc", "Alt+Tab"]],
+	["Keep Ctrl+W and the like for the game", ["Play in fullscreen"]],
 	["Developer console", ["`"]],
 ];
 

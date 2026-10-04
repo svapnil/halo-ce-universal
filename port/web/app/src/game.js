@@ -10,6 +10,8 @@ the same canvas element for as long as the page is open, and size it with CSS
 only.
 */
 
+import { logLine, mark, watchGame } from "./crash.js";
+import { setPlaying } from "./keys.js";
 import { startLobby } from "./lobby.js";
 import { startNetBridge } from "./net_bridge.js";
 import { startRelayBridge } from "./relay_bridge.js";
@@ -47,6 +49,7 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 		onStatus("This page needs cross-origin isolation (COOP and COEP headers): serve it with `npm run dev` (port/web/README.md).");
 		return;
 	}
+	/* (crash.js reports it, and CrashPanel.jsx says that the game stopped) */
 	window.addEventListener("error", (event) => onStatus(`Error: ${event.message}`));
 
 	// halo.js reads its settings from the global Module
@@ -87,7 +90,11 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 			const invite = /#join=([^&]+)/.exec(location.hash)?.[1] || null;
 			let net = { state: "idle" };
 			let relay = null;
-			const report = () => onNet({ ...net, relay });
+			const report = () => {
+				mark(`network ${net.state}${net.error ? `: ${net.error}` : ""}${relay ? `, relay ${relay}` : ""}`);
+				onNet({ ...net, relay });
+			};
+			watchGame(module);
 			/* (once the link to a host is up, the game joins its game: once
 			for each room joined) */
 			let joinAsked = false;
@@ -129,6 +136,9 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 					nativeJoins--;
 					lobby.join();
 				}
+				mark(`game ${status.phase}${status.message ? `: ${status.message}` : ""}`);
+				/* (in a game, the browser asks before the page goes: keys.js) */
+				setPlaying(status.phase !== "main-menu" && status.phase !== "failed");
 				onLobby(status);
 			});
 			startRelayBridge(module, {
@@ -141,8 +151,15 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 				tabTransport() : sfuTransport({ invite, onStatus: onTransport });
 			startNetBridge(module, transport);
 		},
-		print: (text) => console.log(text),
-		printErr: (text) => console.warn(text),
+		// (kept for a crash's report, and ?debug's Save log: crash.js)
+		print: (text) => {
+			logLine(text);
+			console.log(text);
+		},
+		printErr: (text) => {
+			logLine(text);
+			console.warn(text);
+		},
 		setStatus: onStatus,
 	};
 

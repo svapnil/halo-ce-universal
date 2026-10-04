@@ -7,7 +7,8 @@
     "build": "vite build",
     "dev": "vite build && wrangler dev",
     "deploy": "vite build && wrangler deploy",
-    "upload-maps": "node upload_maps.mjs"
+    "upload-maps": "node upload_maps.mjs",
+    "crashes": "node crashes.mjs"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.1.1",

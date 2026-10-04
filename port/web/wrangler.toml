@@ -70,3 +70,14 @@ RELAY_URL = "wss://halo-web-relay.fly.dev/"
 name = "RELAY_LIMIT"
 namespace_id = "1003"
 simple = { limit = 10, period = 60 }
+
+# Crash reports (CRASHES.md): what worker/crash.js keeps of the pages' reports,
+# for 30 days, read with `npm run crashes`. (No id: `wrangler deploy` makes
+# the namespace the first time.) An address sends at most 10 a minute.
+[[kv_namespaces]]
+binding = "CRASHES"
+
+[[ratelimits]]
+name = "CRASH_LIMIT"
+namespace_id = "1004"
+simple = { limit = 10, period = 60 }

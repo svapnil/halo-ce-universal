@@ -99,7 +99,7 @@ NATIVE_INTERNET_PLAY_UNITS = {"p2p.c", "p2p_signal.c", "p2p_crypto.c", "p2p_disc
 DESKTOP_INTERNET_PLAY_UNITS = {"posix_upnp.c"}
 # the browser's units with the host ABI, as posix_*.c (they implement posix.h),
 # and those with the game's (they call it, as port/linux/game's do)
-WEB_POSIX_UNITS = {"web_net.c"}
+WEB_POSIX_UNITS = {"web_net.c", "web_crash.c"}
 WEB_GAME_UNITS = {"web_lobby.c"}
 
 # The page, its threads and its memory:
@@ -267,11 +267,14 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     for source in musl_math_sources():
         add_object(source, musl_math_cflags(abi))
 
-    ldflags = WEB_LINK_FLAGS + ([] if release else ["-sASSERTIONS=1"])
+    # (the threads' part of crash reports: port/web/src/web_pre.js)
+    pre_js = WEB_DIR / "src" / "web_pre.js"
+    ldflags = WEB_LINK_FLAGS + [f"--pre-js {pre_js}"] + ([] if release else ["-sASSERTIONS=1"])
     n.build(
         outputs=output,
         rule="web_link",
         inputs=objects,
+        implicit=[pre_js],
         implicit_outputs=[build_dir / "halo.wasm"],
         variables={"ldflags": " ".join(ldflags)},
     )
