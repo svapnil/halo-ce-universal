@@ -61,6 +61,9 @@ drive the controller.
 extern unsigned char console_is_active(void);
 /* interface/virtual_keyboard.c */
 extern unsigned char virtual_keyboard_active(void);
+/* port/linux/game/menu_functions.c: two players on this machine (the
+campaign's co-op) */
+extern unsigned char pc_menu_coop_players(void);
 
 /* ---------- device tables */
 
@@ -654,6 +657,16 @@ static int sdl_gamepads(SDL_Gamepad *gamepads[PORT_COUNT])
 	return found;
 }
 
+/* the gamepad of a port: the first shares port 0 with the keyboard, but for
+two players with one gamepad (co-op), port 1 has it (the keyboard's player
+is 1, the gamepad's 2) */
+static SDL_Gamepad *port_gamepad(SDL_Gamepad *gamepads[PORT_COUNT], int count, int port)
+{
+	if (count == 1 && pc_menu_coop_players())
+		return port == 1 ? gamepads[0] : NULL;
+	return port < count ? gamepads[port] : NULL;
+}
+
 static SHORT stick(Sint16 value, BOOL flip)
 {
 	int result = flip ? -(int)value - 1 : value;
@@ -737,9 +750,12 @@ static DWORD connected_gamepads(void)
 	DWORD mask = XDEVICE_PORT0_MASK;
 	int port;
 
-	/* the first pad shares port 0 with the keyboard */
-	for (port = 1; port < count; port++)
-		mask |= 1UL << port;
+	/* the first pad shares port 0 with the keyboard (port_gamepad) */
+	for (port = 1; port < PORT_COUNT; port++)
+	{
+		if (port_gamepad(gamepads, count, port))
+			mask |= 1UL << port;
+	}
 	return mask;
 }
 
@@ -833,7 +849,7 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 			else
 				keyboard_controls(&input, &state->Gamepad);
 		}
-		if (count > 0)
+		if (port_gamepad(gamepads, count, 0))
 			sdl_gamepad_state(gamepads[0], &state->Gamepad);
 		test_input_gamepad(&state->Gamepad);
 		if (abs(state->Gamepad.sThumbRX) > STICK_AIMING_DEFLECTION ||
@@ -844,9 +860,9 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 			pthread_mutex_unlock(&mouse_lock);
 		}
 	}
-	else if (port < count)
+	else if (port_gamepad(gamepads, count, port))
 	{
-		sdl_gamepad_state(gamepads[port], &state->Gamepad);
+		sdl_gamepad_state(port_gamepad(gamepads, count, port), &state->Gamepad);
 	}
 
 	if (memcmp(&state->Gamepad, &controllers[port].previous, sizeof(state->Gamepad)))
@@ -870,11 +886,11 @@ DWORD WINAPI XInputSetState(HANDLE device, PXINPUT_FEEDBACK feedback)
 	if (port < 0)
 		return ERROR_DEVICE_NOT_CONNECTED;
 	count = sdl_gamepads(gamepads);
-	if (port < count)
+	if (port_gamepad(gamepads, count, port))
 	{
 		/* the game refreshes the motors every frame; rumble a little longer
 		than that so they do not stutter */
-		SDL_RumbleGamepad(gamepads[port], feedback->Rumble.wLeftMotorSpeed,
+		SDL_RumbleGamepad(port_gamepad(gamepads, count, port), feedback->Rumble.wLeftMotorSpeed,
 			feedback->Rumble.wRightMotorSpeed, 100);
 	}
 	return ERROR_SUCCESS;
