@@ -15,6 +15,10 @@ Every response gets two things a plain file server does not give:
   at a time (WasmFS fetch backend; port/web/src/web_main.c). The backend
   first asks for the size with HEAD and `Range: bytes=0-`, and reads in
   chunks only when the answer has Content-Length and `Accept-Ranges: bytes`.
+  The browser may keep a map's chunks for MAP_LIFETIME, so that the next
+  visit reads them from its disk: the Xbox game's maps do not change. (One
+  that is replaced in the bucket can thus be the old one, or a mix of the
+  two, in a browser for that long.)
 */
 
 import { handleBrowserReports, handleCrash } from "./crash.js";
@@ -29,6 +33,9 @@ const ISOLATION_HEADERS = {
 	/* (where the browser sends its own reports of a page it ended: crash.js) */
 	"Reporting-Endpoints": 'default="/net/reports"',
 };
+
+/* how long a browser keeps a map's chunks without asking again, in seconds */
+const MAP_LIFETIME = 24 * 60 * 60;
 
 export default {
 	async fetch(request, env) {
@@ -107,6 +114,7 @@ async function serveMap(request, env, key) {
 	}
 	const length = end - start + 1;
 	headers.set("Content-Length", String(length));
+	headers.set("Cache-Control", `public, max-age=${MAP_LIFETIME}`);
 
 	if (request.method === "HEAD" || length === 0) {
 		return new Response(null, { status, headers });
