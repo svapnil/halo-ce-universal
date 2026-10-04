@@ -3,7 +3,8 @@ WORKER.JS
 
 Serves the browser build: the page (npm run build), halo.js and halo.wasm
 (ninja web) from the Worker's static assets (build/web), and the maps from an
-R2 bucket. Network play's signalling, at /net/, is rooms.js's (NETWORK.md).
+R2 bucket. Network play's signalling, at /net/, is rooms.js's, and the
+relay's tokens, at /net/relay, relay.js's (NETWORK.md).
 
 Every response gets two things a plain file server does not give:
 
@@ -15,6 +16,7 @@ Every response gets two things a plain file server does not give:
   chunks only when the answer has Content-Length and `Accept-Ranges: bytes`.
 */
 
+import { handleRelay } from "./relay.js";
 import { handleRooms } from "./rooms.js";
 
 export { GameRoom } from "./rooms.js";
@@ -32,6 +34,9 @@ export default {
 		let response;
 
 		// a WebSocket's answer (101) goes as it is, without the headers below
+		if (url.pathname === "/net/relay") {
+			return handleRelay(request, env, url);
+		}
 		if (url.pathname.startsWith("/net/")) {
 			return handleRooms(request, env, url);
 		}

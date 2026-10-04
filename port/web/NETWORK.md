@@ -17,9 +17,10 @@ Status:
   the page's own Multiplayer menu hosts a game that starts at once, and a
   page opened with its invite joins it, in progress, with no menus. Refer
   to "The lobby" and "Testing".
-- Not yet deployed (the secrets are: `wrangler secret put`).
-- To do: a server browser (rooms that list themselves); browsers with the
-  desktop builds.
+- Deployed at openhaloce.com (its secrets: `wrangler secret put`).
+- Native games: a browser joins a desktop build's game through a relay, on
+  Fly.io (refer to "Native games"). A page hosts for browsers only.
+- To do: a server browser (rooms that list themselves).
 
 ## Parts
 
@@ -326,6 +327,147 @@ Damnation 3 seconds later, its invite shown; a second page opened with the
 invite was playing in that game 5 seconds after it opened. With "Wait for
 friends", both pages were in the lobby's Select Teams screen (the friend on
 the other team), and Start game in the host's page took both into the game.
+
+## Native games
+
+A browser joins a game a desktop build hosts,
+with its invite (`halo://join/...`), and the desktop build is not changed.
+The page runs the desktop's own internet play (`port/linux/src/p2p.c`, with
+`p2p_signal.c`, `p2p_crypto.c` and `p2p_discord.c`), so it speaks the
+desktop's protocols as they are, and keeps doing so as upstream changes
+them. What a browser lacks, real sockets, a relay lends it:
+
+```
+ browser                                   relay (port/web/relay)       desktop build
+ ┌───────────────────────────┐ WebSocket  ┌──────────────────┐  UDP     ┌──────────────┐
+ │ p2p.c ── web_net.c ── relay_bridge.js │═══════════│ real sockets     │══════════│ p2p.c        │
+ │ (sealed tunnel, MQTT)     │  records   │ (sees sealed     │ tunnel   │              │
+ └───────────────────────────┘            │  bytes only)     │──────────│ MQTT brokers │
+                                          └──────────────────┘  TCP     └──────────────┘
+```
+
+- **Which internet play.** Both `web_p2p.c` and `p2p.c` implement `p2p.h`.
+  `tools/web_build.py` compiles them with its functions renamed
+  (`p2p_web_*`, `p2p_native_*`), and `src/web_p2p_select.c` gives the game
+  the one the page chose (`HALO_NET_NATIVE`). The page chooses the
+  desktop's when it is opened with `#native=<invite>`, and then joins that
+  game. A page plays with browsers or with desktop builds, not both at once,
+  and hosts for browsers only: hosting for desktop builds' players would
+  have the relay carry every joiner's traffic, and a host's page in the
+  background slow the game for all of them.
+- **Sockets.** `p2p.c` keeps its stand-ins on this machine, as `web_p2p.c`
+  does, and only its tunnel's socket and its brokers' connections go to the
+  internet. `web_net.c` sends a socket's datagrams and connections there
+  (an address that is not this machine's, a broadcast or a peer's virtual
+  one) through the relay, and puts what comes back into the socket, so
+  `select` and the rest work as for any socket of `web_net.c`. Names are
+  looked up through the relay too (`posix_resolve_ipv4`). UPnP is stubbed:
+  the relay has a public address, and no router to ask.
+- **The bridge.** `web_net.c` and `app/src/relay_bridge.js` share two rings
+  in the game's memory (`struct web_relay_bridge`), as `web_p2p.c` and
+  `net_bridge.js` do; a thread of `web_net.c`'s takes the page's records.
+  The page passes each record to the relay as one WebSocket message and
+  knows nothing of what it holds.
+- **The relay** (`relay/main.go`, Go) opens a socket for each socket of
+  the page's that reaches the internet. The tunnel is sealed end to end, so
+  it sees addresses and sealed bytes. Messages (big-endian numbers; a
+  handle is a socket of the page's):
+
+  | Page to relay | Relay to page |
+  | --- | --- |
+  | 1 datagram: handle, address, port, data | 1 datagram: handle, from address, from port, data |
+  | 2 connect: handle, address, port | 2 connected: handle |
+  | 3 data: handle, bytes | 3 refused: handle |
+  | 4 close: handle | 4 data: handle, bytes |
+  | 5 resolve: number, name | 5 closed: handle |
+  | | 6 resolved: number, address (0: none) |
+  | 0x7f ping, echoed by the page | 0x7f ping: number |
+
+  With `RELAY_REPORT=1` it logs each page's round trip to it, the traffic
+  each way, and the loss of the desktop's tunnel packets on their way to
+  it, from the packet numbers in their header (which is authenticated, not
+  encrypted).
+- **The page's menus.** The Multiplayer menu's Join takes either kind of
+  invite. A desktop build's starts the page again, at `#native=<invite>`,
+  as the game's internet play is chosen as it starts; and Host, on a page
+  that joined a desktop build's game, starts it again with browsers' (at
+  `#host=<map>.<game type>.<now or wait>`, which it then hosts).
+- **Where it runs.** On Fly.io (`relay/fly.toml`: the app `halo-web-relay`,
+  in iad), not on Workers, which have no UDP. What Fly does with UDP, as
+  found in deploying it:
+  - it takes UDP in only on a dedicated IPv4 (109.105.217.218), for sockets
+    bound to `fly-global-services`, and does not translate ports;
+  - only ports listed one by one, each its own `[[services]]`: a
+    `start_port`/`end_port` range validates, but takes nothing in. Each
+    session takes a port of `RELAY_UDP_PORTS` (32, for now: 32 pages in
+    native games at once), and is reached at the dedicated IP and that port
+    as it is (no NAT: the desktop's hole punching gets through);
+  - what the machine sends first (a STUN request, a punch) leaves from its
+    egress address, not the dedicated IP, and STUN reports that one, which
+    takes nothing in. So the relay rewrites STUN's answers to the dedicated
+    IP (`RELAY_PUBLIC_IP`), which the page then offers; a peer's packets to
+    it come in, and the answers to them leave from it;
+  - one machine: a peer's UDP reaches the IP's nearest machine, which must
+    hold the page's sockets (more regions: an app, and an IP, for each);
+  - Fly leaves about 1300 bytes of a packet, less than the tunnel's largest
+    (1431); no loss was seen, but the sizes were not logged.
+
+  Measured (2026-10-04), the live site, through iad, to a desktop build
+  behind two NATs (Docker's, which gives each destination its own port, and
+  a router's): two browsers in one desktop host's game,
+  the same final scores on all three machines, 22 to 26 ms average round
+  trip from the page to the relay, and none of about 8,200 tunnel packets
+  from the host missing. A session that started seconds after the machine
+  did got no STUN answers at all (its port worked later): to watch after
+  deploys.
+
+### The relay's limits
+
+Anyone who opens the site can get a token, so a token alone does not stop
+abuse: it makes the relay serve only what comes through the Worker's
+limits, and the relay does only what native games need, so that a token
+is worth little for anything else.
+
+- **Tokens** (`worker/relay.js`). Before each connection the page asks
+  `POST /net/relay`: only the site's own pages get an answer, at most 10 a
+  minute for an address (`RELAY_LIMIT`). The answer is the relay's address
+  (`RELAY_URL`) and a token, `<expiry>.<nonce>.<signature>`: the
+  signature is the HMAC-SHA256 (base64url) of `relay1.<expiry>.<nonce>`
+  with `RELAY_TOKEN_SECRET`, which the Worker and the relay share. The
+  relay takes a token once, within its minute, and checks the page's
+  `Origin` (`RELAY_ORIGINS`).
+- **What it sends.** Names: only the brokers' and the STUN servers' are
+  looked up. TCP: only to the addresses those brokers had, on their port.
+  UDP: to the STUN servers only a binding request; anywhere else only the
+  desktop's tunnel packets (their magic and size), and only to public
+  addresses; a destination that does not answer gets 200 at most.
+- **What it takes.** UDP only from the addresses the session sent to (from
+  any of their ports, as TURN's permissions: a peer behind a NAT that gives
+  each destination its own port answers from another than STUN told): no
+  one else reaches a page through it.
+- **Caps**, for a page that joins (a joiner sends its host about 35
+  datagrams, 5 KiB, a second, and gets about 40, 15 KiB). Each session: 200
+  datagrams and 256 KiB a second to its peers, 500 and 512 KiB from them,
+  64 KiB a second to the brokers, 2 UDP and 6 TCP sockets, 16
+  destinations, 30 lookups a minute (10 at once). Sessions: 4 from an
+  address, 400 in all, and one UDP port each (32 on Fly.io, for now).
+
+At worst, then, a token buys a few hundred small datagrams, shaped like the
+desktop's, to an address that does not answer: nothing amplified, and
+nothing to a private network. `relay/test/limits.test.mjs` tests each of
+these.
+
+### Trying it
+
+Locally, with `npm run dev` (no secret: `RELAY_INSECURE=1` for the relay;
+`?relay=<ws URL>` gives the page another relay than port 8790 of its host):
+`relay/test/README.md` runs a desktop build's host in Docker beside the relay,
+and joins it from a headless Chrome. By hand, open a desktop build's invite in
+a page: `http://localhost:8765/#native=halo://join/...`.
+
+Deployed: the relay as `relay/fly.toml` says, the same secret in the Worker
+(`npx wrangler secret put RELAY_TOKEN_SECRET`), and `RELAY_URL` in
+`wrangler.toml`.
 
 ## Moving to Phoenix
 

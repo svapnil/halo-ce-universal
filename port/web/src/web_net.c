@@ -13,12 +13,23 @@ posix_local_ipv4_address gives xnet.c for its XNADDR):
 
 - datagrams to this machine (127.0.0.0/8, its address, 0.0.0.0) and
   broadcasts (255.255.255.255) go to its sockets bound to their port;
-  datagrams anywhere else are lost, as a datagram may be;
+  datagrams anywhere else are lost, as a datagram may be (but refer to
+  the relay, below);
 - a connection to this machine is made at once by a socket listening on
-  its port (or refused); one anywhere else is unreachable;
+  its port (or refused); one anywhere else is unreachable (but the
+  relay);
 - what other machines send comes in through web_p2p.c's stand-ins, which are
   sockets here too (NETWORK.md, "The game's side"), as p2p.c's are the
   system's.
+
+Once the page has started the relay's bridge (app/src/relay_bridge.js:
+native games, NETWORK.md), a socket's datagrams to the internet and its
+connections there go through the relay instead, a server with real sockets
+that the page reaches over a WebSocket: the desktop's internet play
+(p2p.c), which then runs here, reaches MQTT brokers, STUN servers and its
+peers' tunnels so. Names are looked up there too (posix_resolve_ipv4).
+What the relay sends comes back into the sockets here, so select and the
+rest work on them unchanged.
 
 Each call answers as posix_net.c's does: Winsock's error codes, a connect
 that fails is refused at once, select takes any socket of here, blocking
@@ -29,9 +40,11 @@ It is compiled with the host ABI, as posix_*.c are, and uses no header of
 the system's for sockets: it keeps the address in Winsock's layout itself.
 */
 
+#include <emscripten/emscripten.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <time.h>
 
 #include "posix.h"
@@ -159,6 +172,13 @@ struct web_socket
 	int reset;
 	int send_shut;
 	int receive_shut;
+
+	/* its traffic to the internet goes through the relay ("The relay",
+	below), as a socket of the relay's of this handle; a stream's
+	connection is under way until the relay says */
+	int relayed;
+	unsigned int relay_handle;
+	int relay_connecting;
 };
 
 static pthread_mutex_t net_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -379,8 +399,423 @@ static void detach_peer(struct web_socket *socket, int reset)
 	}
 }
 
+/* ---------- the relay (native games)
+
+The page and this file share two rings in memory (struct web_relay_bridge),
+one each way, of records: a little-endian 16-bit size of the body, the
+record's type, a 0, then the body, whose numbers are big-endian. The page
+sends each record to the relay as one WebSocket message (its type, then
+its body), and gives each of the relay's messages back as a record:
+app/src/relay_bridge.js and port/web/relay (main.go), which NETWORK.md
+describes.
+
+A relayed socket's handle is its index here, with a count of the sockets
+made relayed above it, so that what the relay sends a socket closed since
+reaches no other in its place. */
+
+enum
+{
+	RELAY_MAGIC = 0x524C4159,
+	RELAY_VERSION = 1,
+	RELAY_RING_SIZE = 1 << 20,
+	RELAY_RECORD_HEADER_SIZE = 4,
+	/* a stream's bytes in one record */
+	RELAY_CHUNK_SIZE = 16 * 1024,
+	/* the name lookups waited for at once, and how long */
+	RELAY_LOOKUPS = 8,
+	RELAY_LOOKUP_TIME = 5,
+};
+
+/* records to the relay */
+enum
+{
+	/* handle, address, port, the datagram */
+	_relay_out_datagram = 1,
+	/* handle, address, port */
+	_relay_out_connect,
+	/* handle, the bytes */
+	_relay_out_data,
+	/* handle */
+	_relay_out_close,
+	/* a lookup's number, the name */
+	_relay_out_resolve,
+};
+
+/* records from the relay */
+enum
+{
+	/* handle, from address, from port, the datagram */
+	_relay_in_datagram = 1,
+	/* handle */
+	_relay_in_connected,
+	_relay_in_refused,
+	/* handle, the bytes */
+	_relay_in_data,
+	/* handle: the other end closed (after its bytes) */
+	_relay_in_closed,
+	/* a lookup's number, the address (0: none) */
+	_relay_in_resolved,
+};
+
+struct web_relay_ring
+{
+	unsigned int head;
+	unsigned int tail;
+	unsigned int size;
+	unsigned int reserved;
+	unsigned char data[RELAY_RING_SIZE];
+};
+
+/* what the page finds through web_relay_bridge() */
+struct web_relay_bridge
+{
+	unsigned int magic;
+	unsigned int version;
+	/* raised, and notified, with each record to the page */
+	unsigned int out_sequence;
+	/* raised, and notified, by the page with each record to here */
+	unsigned int in_sequence;
+	/* raised, and notified, as records from the page are taken */
+	unsigned int in_taken;
+	/* records to the page lost to a full ring */
+	unsigned int out_lost;
+	struct web_relay_ring out;
+	struct web_relay_ring in;
+};
+
+static struct web_relay_bridge relay_bridge = { RELAY_MAGIC, RELAY_VERSION };
+
+static struct
+{
+	/* the page started the bridge: the internet is reached through it */
+	int enabled;
+	int pump_started;
+	unsigned int next_generation;
+	struct
+	{
+		unsigned int number;
+		unsigned int address;
+		int answered;
+	} lookups[RELAY_LOOKUPS];
+	unsigned int next_lookup;
+} relay;
+
+static void put32(unsigned char *bytes, unsigned int value)
+{
+	bytes[0] = (unsigned char)(value >> 24);
+	bytes[1] = (unsigned char)(value >> 16);
+	bytes[2] = (unsigned char)(value >> 8);
+	bytes[3] = (unsigned char)value;
+}
+
+static void put16(unsigned char *bytes, unsigned short value)
+{
+	bytes[0] = (unsigned char)(value >> 8);
+	bytes[1] = (unsigned char)value;
+}
+
+static unsigned int get32(const unsigned char *bytes)
+{
+	return (unsigned int)bytes[0] << 24 | (unsigned int)bytes[1] << 16 | (unsigned int)bytes[2] << 8 | bytes[3];
+}
+
+static unsigned short get16(const unsigned char *bytes)
+{
+	return (unsigned short)(bytes[0] << 8 | bytes[1]);
+}
+
+/* an address the relay reaches for this machine: on the internet (not
+this machine, a broadcast, or a peer's virtual address, 100.64.0.0/10) */
+static int relay_reaches(unsigned int address)
+{
+	return relay.enabled && !is_this_machine(address) && address != WEB_BROADCAST_ADDRESS &&
+		(address & 0xFFC00000) != 0x64400000;
+}
+
+static unsigned int ring_used(const struct web_relay_ring *ring)
+{
+	return __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE) - __atomic_load_n(&ring->tail, __ATOMIC_ACQUIRE);
+}
+
+static void ring_copy_in(struct web_relay_ring *ring, unsigned int position, const void *data, int size)
+{
+	unsigned int offset = position % RELAY_RING_SIZE;
+	unsigned int first = (unsigned int)size < RELAY_RING_SIZE - offset ? (unsigned int)size : RELAY_RING_SIZE - offset;
+
+	memcpy(ring->data + offset, data, first);
+	memcpy(ring->data, (const unsigned char *)data + first, (size_t)size - first);
+}
+
+static void ring_copy_out(const struct web_relay_ring *ring, unsigned int position, void *data, int size)
+{
+	unsigned int offset = position % RELAY_RING_SIZE;
+	unsigned int first = (unsigned int)size < RELAY_RING_SIZE - offset ? (unsigned int)size : RELAY_RING_SIZE - offset;
+
+	memcpy(data, ring->data + offset, first);
+	memcpy((unsigned char *)data + first, ring->data, (size_t)size - first);
+}
+
+/* room in the ring to the page for a record with a body of size bytes */
+static int relay_room(int size)
+{
+	return RELAY_RING_SIZE - ring_used(&relay_bridge.out) >= (unsigned int)(RELAY_RECORD_HEADER_SIZE + size);
+}
+
+/* a record to the relay, of a header and a body (either may be empty); 0
+if the ring is full. Under net_lock, which keeps writers apart */
+static int relay_record(int type, const void *header, int header_size, const void *body, int body_size)
+{
+	unsigned char record[RELAY_RECORD_HEADER_SIZE];
+	unsigned int head = relay_bridge.out.head;
+	int size = header_size + body_size;
+
+	if (size > 0xFFFF || !relay_room(size))
+	{
+		relay_bridge.out_lost++;
+		return 0;
+	}
+	record[0] = (unsigned char)size;
+	record[1] = (unsigned char)(size >> 8);
+	record[2] = (unsigned char)type;
+	record[3] = 0;
+	ring_copy_in(&relay_bridge.out, head, record, RELAY_RECORD_HEADER_SIZE);
+	ring_copy_in(&relay_bridge.out, head + RELAY_RECORD_HEADER_SIZE, header, header_size);
+	ring_copy_in(&relay_bridge.out, head + RELAY_RECORD_HEADER_SIZE + header_size, body, body_size);
+	__atomic_store_n(&relay_bridge.out.head, head + RELAY_RECORD_HEADER_SIZE + size, __ATOMIC_RELEASE);
+	__atomic_add_fetch(&relay_bridge.out_sequence, 1, __ATOMIC_SEQ_CST);
+	__builtin_wasm_memory_atomic_notify((int *)&relay_bridge.out_sequence, ~0u);
+	return 1;
+}
+
+/* the socket of a handle the relay gave back, or NULL (closed since).
+Under net_lock */
+static struct web_socket *relayed_socket(unsigned int handle)
+{
+	struct web_socket *socket = &sockets[handle & (MAXIMUM_SOCKETS - 1)];
+
+	return socket->used && socket->relayed && socket->relay_handle == handle ? socket : NULL;
+}
+
+/* appends the relay's bytes to a stream's; past its buffer, the
+connection ends. Under net_lock */
+static void relay_stream_data(struct web_socket *socket, const unsigned char *data, int size)
+{
+	int index;
+
+	if (!socket->buffer || socket->buffer_count + size > STREAM_BUFFER_SIZE)
+	{
+		unsigned char header[4];
+
+		socket->reset = 1;
+		put32(header, socket->relay_handle);
+		relay_record(_relay_out_close, header, sizeof(header), NULL, 0);
+		return;
+	}
+	for (index = 0; index < size; index++)
+		socket->buffer[(socket->buffer_start + socket->buffer_count + index) % STREAM_BUFFER_SIZE] = data[index];
+	socket->buffer_count += size;
+}
+
+/* takes a record from the relay. Under net_lock */
+static void relay_take(int type, const unsigned char *body, int size)
+{
+	struct web_socket *socket;
+
+	if (type == _relay_in_resolved)
+	{
+		unsigned int number;
+		int index;
+
+		if (size < 8)
+			return;
+		number = get32(body);
+		index = (int)(number % RELAY_LOOKUPS);
+		if (relay.lookups[index].number == number)
+		{
+			relay.lookups[index].address = get32(body + 4);
+			relay.lookups[index].answered = 1;
+		}
+		return;
+	}
+	if (size < 4 || !(socket = relayed_socket(get32(body))))
+		return;
+	switch (type)
+	{
+	case _relay_in_datagram:
+		if (size >= 10 && socket->type == WEB_SOCK_DGRAM)
+			deliver_datagram(socket, get32(body + 4), get16(body + 8), body + 10, size - 10);
+		break;
+	case _relay_in_connected:
+		socket->relay_connecting = 0;
+		break;
+	case _relay_in_refused:
+		socket->relay_connecting = 0;
+		socket->reset = 1;
+		break;
+	case _relay_in_data:
+		if (socket->type == WEB_SOCK_STREAM && !socket->receive_shut)
+			relay_stream_data(socket, body + 4, size - 4);
+		break;
+	case _relay_in_closed:
+		socket->relay_connecting = 0;
+		socket->peer_finished = 1;
+		break;
+	}
+}
+
+/* takes the records the page wrote: a thread of its own, woken by the
+page's notify on in_sequence */
+static void *relay_pump(void *argument)
+{
+	static unsigned char body[0x10000];
+
+	(void)argument;
+	for (;;)
+	{
+		unsigned int sequence = __atomic_load_n(&relay_bridge.in_sequence, __ATOMIC_ACQUIRE);
+		unsigned int tail = relay_bridge.in.tail;
+		int took = 0;
+
+		pthread_mutex_lock(&net_lock);
+		while (ring_used(&relay_bridge.in) >= RELAY_RECORD_HEADER_SIZE)
+		{
+			unsigned char header[RELAY_RECORD_HEADER_SIZE];
+			int size;
+
+			ring_copy_out(&relay_bridge.in, tail, header, RELAY_RECORD_HEADER_SIZE);
+			size = header[0] | header[1] << 8;
+			ring_copy_out(&relay_bridge.in, tail + RELAY_RECORD_HEADER_SIZE, body, size);
+			tail += RELAY_RECORD_HEADER_SIZE + (unsigned int)size;
+			__atomic_store_n(&relay_bridge.in.tail, tail, __ATOMIC_RELEASE);
+			relay_take(header[2], body, size);
+			took = 1;
+		}
+		if (took)
+			pthread_cond_broadcast(&net_changed);
+		pthread_mutex_unlock(&net_lock);
+		if (took)
+		{
+			__atomic_add_fetch(&relay_bridge.in_taken, 1, __ATOMIC_SEQ_CST);
+			__builtin_wasm_memory_atomic_notify((int *)&relay_bridge.in_taken, ~0u);
+		}
+		/* (a while at most, should a notify be missed) */
+		__builtin_wasm_memory_atomic_wait32((int *)&relay_bridge.in_sequence, (int)sequence, 100 * 1000000LL);
+	}
+	return NULL;
+}
+
+/* starts the pump, before the first record that the relay answers (from
+the game's threads: the page's main thread cannot wait for a worker to
+start). Under net_lock */
+static void relay_start_pump(void)
+{
+	pthread_t thread;
+
+	if (relay.pump_started)
+		return;
+	relay.pump_started = 1;
+	if (pthread_create(&thread, NULL, relay_pump, NULL) == 0)
+		pthread_detach(thread);
+}
+
+/* makes a socket relayed (its handle). Under net_lock */
+static void relay_attach(struct web_socket *socket)
+{
+	if (socket->relayed)
+		return;
+	socket->relayed = 1;
+	socket->relay_handle = ++relay.next_generation << 8 | (unsigned int)index_of(socket);
+	relay_start_pump();
+}
+
+/* a datagram from socket to the internet, through the relay (lost if its
+ring is full, as a datagram may be). Under net_lock */
+static void relay_send_datagram(struct web_socket *socket, unsigned int address, unsigned short port,
+	const void *data, int length)
+{
+	unsigned char header[10];
+
+	relay_attach(socket);
+	put32(header, socket->relay_handle);
+	put32(header + 4, address);
+	put16(header + 8, port);
+	relay_record(_relay_out_datagram, header, sizeof(header), data, length);
+}
+
+/* a stream's connection to the internet, through the relay: under way
+until it says. Under net_lock; 0 or the error */
+static int relay_connect(struct web_socket *socket, unsigned int address, unsigned short port)
+{
+	unsigned char header[10];
+
+	if (!socket->bound && !bind_ephemeral(socket, WEB_LOCAL_ADDRESS))
+		return WSAEADDRINUSE;
+	if (socket->local_address == 0)
+		socket->local_address = WEB_LOCAL_ADDRESS;
+	socket->buffer = malloc(STREAM_BUFFER_SIZE);
+	if (!socket->buffer)
+		return WSAENOBUFS;
+	relay_attach(socket);
+	put32(header, socket->relay_handle);
+	put32(header + 4, address);
+	put16(header + 8, port);
+	if (!relay_record(_relay_out_connect, header, sizeof(header), NULL, 0))
+		return WSAENOBUFS;
+	socket->connected = 1;
+	socket->remote_address = address;
+	socket->remote_port = port;
+	socket->relay_connecting = 1;
+	return 0;
+}
+
+/* what a relayed stream sends: as much as the ring takes, in records of
+RELAY_CHUNK_SIZE at most. Under net_lock; how much it took */
+static int relay_send_stream(struct web_socket *socket, const unsigned char *data, int length)
+{
+	unsigned char header[4];
+	int sent = 0;
+
+	put32(header, socket->relay_handle);
+	while (sent < length)
+	{
+		int size = length - sent < RELAY_CHUNK_SIZE ? length - sent : RELAY_CHUNK_SIZE;
+
+		if (!relay_room((int)sizeof(header) + size) ||
+			!relay_record(_relay_out_data, header, sizeof(header), data + sent, size))
+		{
+			break;
+		}
+		sent += size;
+	}
+	return sent;
+}
+
+/* the relay is told that a relayed socket closed. Under net_lock */
+static void relay_detach(struct web_socket *socket)
+{
+	unsigned char header[4];
+
+	if (!socket->relayed)
+		return;
+	put32(header, socket->relay_handle);
+	relay_record(_relay_out_close, header, sizeof(header), NULL, 0);
+}
+
+/* the page's: where the relay's bridge is; from then on, the internet is
+reached through it */
+EMSCRIPTEN_KEEPALIVE struct web_relay_bridge *web_relay_bridge(void)
+{
+	relay_bridge.out.size = RELAY_RING_SIZE;
+	relay_bridge.in.size = RELAY_RING_SIZE;
+	__atomic_store_n(&relay.enabled, 1, __ATOMIC_RELEASE);
+	return &relay_bridge;
+}
+
+static int wait_for_change(const struct timespec *deadline);
+
 static void release(struct web_socket *socket)
 {
+	relay_detach(socket);
 	free_datagrams(socket);
 	free(socket->buffer);
 	memset(socket, 0, sizeof(*socket));
@@ -576,6 +1011,17 @@ int posix_socket_connect(int descriptor, const void *address, int address_length
 	}
 	else if (socket->connected || socket->listening)
 		error = WSAEISCONN;
+	else if (relay_reaches(ip))
+	{
+		error = relay_connect(socket, ip, port);
+		/* (a blocking socket waits for the relay's answer) */
+		while (!error && !socket->nonblocking && socket->relay_connecting)
+			wait_for_change(NULL);
+		if (!error && socket->nonblocking)
+			error = WSAEWOULDBLOCK;
+		else if (!error && socket->reset)
+			error = WSAECONNREFUSED;
+	}
 	else if (!is_this_machine(ip))
 		error = WSAEHOSTUNREACH;
 	else
@@ -711,6 +1157,32 @@ static int send_stream(int descriptor, const unsigned char *data, int length)
 			error = WSAENOTCONN;
 			break;
 		}
+		if (socket->relayed)
+		{
+			if (socket->reset)
+				error = WSAECONNRESET;
+			else if (!socket->relay_connecting && (sent = relay_send_stream(socket, data, length)) > 0)
+				break;
+			else if (socket->nonblocking)
+				error = WSAEWOULDBLOCK;
+			else
+			{
+				/* (the page empties the ring without a word to here) */
+				struct timespec soon;
+
+				clock_gettime(CLOCK_REALTIME, &soon);
+				soon.tv_nsec += 10 * 1000000;
+				if (soon.tv_nsec >= 1000000000)
+				{
+					soon.tv_sec++;
+					soon.tv_nsec -= 1000000000;
+				}
+				wait_for_change(&soon);
+				continue;
+			}
+			sent = -1;
+			break;
+		}
 		if (socket->reset || socket->peer < 0)
 		{
 			error = WSAECONNRESET;
@@ -755,6 +1227,11 @@ static void send_datagram(struct web_socket *socket, unsigned int address, unsig
 		source_address_for(broadcast ? WEB_LOCAL_ADDRESS : address);
 	int index;
 
+	if (relay_reaches(address))
+	{
+		relay_send_datagram(socket, address, port, data, length);
+		return;
+	}
 	if (!broadcast && !is_this_machine(address))
 		return;
 	for (index = 0; index < MAXIMUM_SOCKETS; index++)
@@ -1171,6 +1648,9 @@ static int is_ready(const struct web_socket *socket, int list)
 	case 1:
 		if (socket->type == WEB_SOCK_DGRAM)
 			return 1;
+		if (socket->relayed)
+			return socket->connected && !socket->relay_connecting && !socket->reset && !socket->send_shut &&
+				relay_room(4 + 1);
 		return socket->connected && !socket->reset && !socket->send_shut && stream_room(socket) > 0;
 	default:
 		return 0;
@@ -1262,4 +1742,75 @@ int posix_socket_select(int *read, int *read_count, int *write, int *write_count
 posix_ulong posix_local_ipv4_address(void)
 {
 	return (posix_ulong)swap32(WEB_LOCAL_ADDRESS);
+}
+
+/* a name's address through the relay (the browser looks up no names for
+sockets); a dotted quad's at once. Network byte order; 0 if none */
+posix_ulong posix_resolve_ipv4(const char *host)
+{
+	unsigned int parts[4];
+	char end;
+	unsigned int number;
+	int index;
+	struct timespec deadline;
+	unsigned int address = 0;
+
+	if (!host || !*host)
+		return 0;
+	if (sscanf(host, "%u.%u.%u.%u%c", &parts[0], &parts[1], &parts[2], &parts[3], &end) == 4 &&
+		parts[0] < 256 && parts[1] < 256 && parts[2] < 256 && parts[3] < 256)
+	{
+		return (posix_ulong)swap32(parts[0] << 24 | parts[1] << 16 | parts[2] << 8 | parts[3]);
+	}
+	pthread_mutex_lock(&net_lock);
+	if (!relay.enabled || strlen(host) > 255)
+	{
+		pthread_mutex_unlock(&net_lock);
+		return 0;
+	}
+	relay_start_pump();
+	number = ++relay.next_lookup;
+	index = (int)(number % RELAY_LOOKUPS);
+	relay.lookups[index].number = number;
+	relay.lookups[index].answered = 0;
+	{
+		unsigned char header[4];
+
+		put32(header, number);
+		if (!relay_record(_relay_out_resolve, header, sizeof(header), host, (int)strlen(host)))
+		{
+			pthread_mutex_unlock(&net_lock);
+			return 0;
+		}
+	}
+	clock_gettime(CLOCK_REALTIME, &deadline);
+	deadline.tv_sec += RELAY_LOOKUP_TIME;
+	while (relay.lookups[index].number == number && !relay.lookups[index].answered)
+	{
+		if (!wait_for_change(&deadline))
+			break;
+	}
+	if (relay.lookups[index].number == number && relay.lookups[index].answered)
+		address = relay.lookups[index].address;
+	pthread_mutex_unlock(&net_lock);
+	return (posix_ulong)swap32(address);
+}
+
+/* ---------- UPnP: behind the relay, there is no router to ask */
+
+int posix_upnp_forward_udp(unsigned short port, unsigned short preferred_port, posix_ulong *external_address,
+	unsigned short *external_port, char *error, int error_size)
+{
+	(void)port;
+	(void)preferred_port;
+	(void)external_address;
+	(void)external_port;
+	if (error && error_size > 0)
+		snprintf(error, (size_t)error_size, "the browser has no router to ask");
+	return 0;
+}
+
+void posix_upnp_stop_forwarding_udp(unsigned short external_port)
+{
+	(void)external_port;
 }

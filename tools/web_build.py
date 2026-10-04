@@ -57,17 +57,33 @@ WEB_GAME_RENAMES: Dict[str, List[str]] = {
 # xnet.c stay as they are; under them, the browser build has its own:
 #  - sockets: web_net.c's posix_socket_* (in this page's memory). posix_net.c
 #    keeps its other functions, with these renamed out of the way;
-#  - internet play: web_p2p.c's p2p.h, in place of the desktop's units here
-#    (MQTT, STUN, UPnP, Discord: none of them reach a browser). KCP and
-#    miniupnpc, which only they use, are left out too.
+#  - internet play: web_p2p.c's p2p.h (browsers, through the SFU), or the
+#    desktop's own (native games, through the relay), as the page chooses
+#    (below). miniupnpc, which only UPnP uses, is left out.
 WEB_NET_FUNCTIONS = [
     "posix_socket_last_error", "posix_socket", "posix_socket_close", "posix_socket_bind", "posix_socket_connect",
     "posix_socket_listen", "posix_socket_accept", "posix_socket_send", "posix_socket_sendto", "posix_socket_recv",
     "posix_socket_recvfrom", "posix_socket_shutdown", "posix_socket_set_nonblocking", "posix_socket_bytes_available",
     "posix_socket_set_nodelay", "posix_socket_setsockopt", "posix_socket_getsockopt", "posix_socket_getsockname",
     "posix_socket_getpeername", "posix_socket_select", "posix_local_ipv4_address",
+    # (a name's address comes from the relay: web_net.c)
+    "posix_resolve_ipv4",
 ]
-DESKTOP_INTERNET_PLAY_UNITS = {"p2p.c", "p2p_signal.c", "p2p_crypto.c", "p2p_discord.c", "posix_upnp.c"}
+# Native games (NETWORK.md, "Native games"): the desktop's internet play
+# runs here too, its sockets to the internet through the relay (web_net.c).
+# Both it and web_p2p.c implement p2p.h, so each is compiled with p2p.h's
+# functions renamed (p2p_native_*, p2p_web_*), and web_p2p_select.c gives
+# p2p.h to the game, from the one the page chose. UPnP is left out: behind
+# the relay there is no router to ask (web_net.c has its stubs).
+P2P_FUNCTIONS = [
+    "p2p_initialize", "p2p_hand_off_invite", "p2p_join_invite", "p2p_identifier", "p2p_peer_address",
+    "p2p_outgoing", "p2p_incoming", "p2p_broadcast_targets", "p2p_send_datagram", "p2p_broadcast_datagram",
+    "p2p_socket_port", "p2p_port_taken", "p2p_socket_closed", "p2p_take_clipboard_text",
+    "p2p_set_game_player_counts", "p2p_discord_sanitize", "p2p_discord_identity", "p2p_hardware_id",
+    "p2p_hardware_id_sanitize", "p2p_peer_endpoint_address",
+]
+NATIVE_INTERNET_PLAY_UNITS = {"p2p.c", "p2p_signal.c", "p2p_crypto.c", "p2p_discord.c"}
+DESKTOP_INTERNET_PLAY_UNITS = {"posix_upnp.c"}
 # the browser's units with the host ABI, as posix_*.c (they implement posix.h),
 # and those with the game's (they call it, as port/linux/game's do)
 WEB_POSIX_UNITS = {"web_net.c"}
@@ -188,8 +204,15 @@ def generate_web_build(n: Writer, sln: Any) -> None:
     posix_cflags = " ".join(posix_abi + [f"-I{platform_dir}"])
     mbedtls_include = f"-I{MBEDTLS_DIR / 'include'}"
     native_sockets = " ".join(f"-D{name}=posix_native_{name[len('posix_'):]}" for name in WEB_NET_FUNCTIONS)
+
+    def p2p_renames(prefix: str) -> str:
+        return " ".join(f"-D{name}={prefix}_{name[len('p2p_'):]}" for name in P2P_FUNCTIONS)
+
     for source in sorted(platform_dir.glob("*.c")):
         if source.name in DESKTOP_INTERNET_PLAY_UNITS:
+            continue
+        if source.name in NATIVE_INTERNET_PLAY_UNITS:
+            add_object(source, f"{platform_cflags} {p2p_renames('p2p_native')}")
             continue
         if source.name == "posix_update.c":
             add_object(source, f"{posix_cflags} {mbedtls_include}")
@@ -210,8 +233,11 @@ def generate_web_build(n: Writer, sln: Any) -> None:
             add_object(source, posix_cflags)
         elif source.name in WEB_GAME_UNITS:
             add_object(source, game_cflags)
+        elif source.name == "web_p2p.c":
+            add_object(source, f"{platform_cflags} {p2p_renames('p2p_web')}")
         else:
             add_object(source, platform_cflags)
+    add_object(KCP_DIR / "ikcp.c", " ".join([abi, "-std=gnu11", "-w"]))
     for source in sorted((MBEDTLS_DIR / "library").glob("*.c")):
         add_object(source, " ".join(posix_abi + [mbedtls_include, f"-I{MBEDTLS_DIR / 'library'}",
                                                  "-fno-builtin-wcslen", "-w"]))
