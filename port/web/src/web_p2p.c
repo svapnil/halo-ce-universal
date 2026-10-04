@@ -42,6 +42,7 @@ only look up and create stand-ins, and queue datagrams.
 #include "halo_port_limits.h"
 
 #include <emscripten/emscripten.h>
+#include <ctype.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -97,6 +98,8 @@ enum
 	/* the game hosts (it listens for connections), or no longer */
 	_out_hosting,
 	_out_not_hosting,
+	/* the page is to join the room of this invite (the menus' Direct Link) */
+	_out_join,
 };
 
 /* the records of the ring from the page */
@@ -248,7 +251,13 @@ static struct
 	int sent_port_next;
 	int hosting_socket;
 	int told_hosting;
-} p2p = { .wake_socket = -1, .wake_sender = -1, .hosting_socket = -1 };
+	/* the menus' Create Game: for the internet (a room), not LAN */
+	int hosting_allowed;
+} p2p = { .wake_socket = -1, .wake_sender = -1, .hosting_socket = -1, .hosting_allowed = 1 };
+
+/* the invite of the room the page made for the game hosted, which the page
+writes here (app/src/game.js), for the menus to show and copy; empty if none */
+static char room_invite[256];
 
 /* ---------- helpers */
 
@@ -435,21 +444,13 @@ EMSCRIPTEN_KEEPALIVE void web_p2p_wake(void)
 
 /* ---------- this machine */
 
+/* this machine's identifier when the desktop's internet play runs beside
+this (web_p2p_select.c): one for both, as the game's XNADDR has one */
+const unsigned char *web_p2p_shared_identifier(void);
+
 const unsigned char *p2p_identifier(void)
 {
-	static pthread_mutex_t identifier_lock = PTHREAD_MUTEX_INITIALIZER;
-	static unsigned char identifier[IDENTIFIER_SIZE];
-	static int has_identifier;
-
-	/* (random for each run, as p2p.c's comes from a key made each run) */
-	pthread_mutex_lock(&identifier_lock);
-	if (!has_identifier)
-	{
-		posix_random_bytes(identifier, sizeof(identifier));
-		has_identifier = 1;
-	}
-	pthread_mutex_unlock(&identifier_lock);
-	return identifier;
+	return web_p2p_shared_identifier();
 }
 
 /* ---------- peers */
@@ -1146,7 +1147,7 @@ static void bridge_readable(void)
 /* tells the page when the game starts or stops hosting */
 static void update_hosting(void)
 {
-	int hosting = p2p.hosting_socket >= 0;
+	int hosting = p2p.hosting_socket >= 0 && __atomic_load_n(&p2p.hosting_allowed, __ATOMIC_ACQUIRE);
 
 	if (hosting != p2p.told_hosting && out_record(0, hosting ? _out_hosting : _out_not_hosting, NULL, 0, NULL, 0))
 		p2p.told_hosting = hosting;
@@ -1591,10 +1592,112 @@ int p2p_hand_off_invite(void)
 	return 0;
 }
 
+/* a room's invite in text (as app/src/halo_net.js's parseInvite takes it:
+<room>.<secret>, alone or in a link's #join=) */
+static int has_room_invite(const char *text)
+{
+	static const char room_alphabet[] = "0123456789ABCDEFGHJKMNPQRSTVWXYZabcdefghjkmnpqrstvwxyz";
+	const char *at;
+
+	for (at = text; *at; at++)
+	{
+		int length = 0;
+		int secret = 0;
+
+		while (at[length] && strchr(room_alphabet, at[length]))
+			length++;
+		if (length != 8 || at[8] != '.' || (at != text && strchr(room_alphabet, at[-1])))
+			continue;
+		while (at[9 + secret] && (isalnum((unsigned char)at[9 + secret]) || at[9 + secret] == '-' || at[9 + secret] == '_'))
+			secret++;
+		if (secret == 22)
+			return 1;
+	}
+	return 0;
+}
+
+/* a browser's invite (the menus' Direct Link): the page joins its room,
+whose host's game the menus then find */
 int p2p_join_invite(const char *text)
 {
-	(void)text;
+	int asked;
+
+	if (!text || !has_room_invite(text) || strlen(text) > 1024)
+		return 0;
+	pthread_mutex_lock(&p2p_lock);
+	asked = out_record(0, _out_join, text, (int)strlen(text), NULL, 0);
+	pthread_mutex_unlock(&p2p_lock);
+	return asked;
+}
+
+/* ---------- the PC menus' internet games */
+
+void p2p_set_hosting_allowed(int allowed)
+{
+	__atomic_store_n(&p2p.hosting_allowed, allowed != 0, __ATOMIC_RELEASE);
+	web_p2p_wake();
+}
+
+/* the page's: where it writes the room's invite (an empty text: none) */
+EMSCRIPTEN_KEEPALIVE char *web_p2p_room_invite(void)
+{
+	return room_invite;
+}
+
+int p2p_invite_link(char *link, int size)
+{
+	char invite[sizeof(room_invite)];
+
+	memcpy(invite, (const char *)room_invite, sizeof(invite));
+	invite[sizeof(invite) - 1] = 0;
+	if (!invite[0] || p2p.hosting_socket < 0 || size <= 0)
+	{
+		if (size > 0)
+			link[0] = 0;
+		return 0;
+	}
+	snprintf(link, (size_t)size, "%s", invite);
+	return 1;
+}
+
+/* a room is not listed in the server browser (desktop builds could not
+join it): these keep nothing */
+void p2p_set_hosting_public(int public)
+{
+	(void)public;
+}
+
+void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int open,
+	int in_progress, int has_teams)
+{
+	(void)name;
+	(void)map;
+	(void)gametype;
+	(void)engine_type;
+	(void)open;
+	(void)in_progress;
+	(void)has_teams;
+}
+
+void p2p_lobby_browse(int on)
+{
+	(void)on;
+}
+
+void p2p_lobby_refresh(void)
+{
+}
+
+int p2p_lobby_games(struct p2p_listing *games, int maximum_count)
+{
+	(void)games;
+	(void)maximum_count;
 	return 0;
+}
+
+void p2p_lobby_mark_failed(const unsigned char *identifier)
+{
+	(void)identifier;
 }
 
 const char *p2p_take_clipboard_text(void)

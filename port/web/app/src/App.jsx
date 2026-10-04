@@ -1,6 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { online, startGame } from "./game.js";
-import { GAME_TYPES, MAPS } from "./lobby.js";
+import { startGame } from "./game.js";
 
 /* The game's canvas. It never re-renders: the game owns it once started
 (game.js). */
@@ -33,11 +32,13 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
 }, () => true);
 
 /* The game's keys that the browser also acts on (Tab leaves the canvas,
-Space and the arrows scroll, F1 opens help). SDL means to keep them from the
-browser, but it sees them on the game's thread, after the browser has acted:
-the canvas keeps them itself. (The game still gets them.) */
+Space and the arrows scroll, F1 opens help, F11 makes the browser's window
+fullscreen). SDL means to keep them from the browser, but it sees them on
+the game's thread, after the browser has acted: the canvas keeps them
+itself. (The game still gets them: its F11 asks for the page's fullscreen,
+as the button does: sdl_platform.c's web_page_fullscreen.) */
 const GAME_KEYS = new Set([
-	"Tab", "Space", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "F1",
+	"Tab", "Space", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "F1", "F11",
 ]);
 
 /* the pointer lock back at a click on the game, while the game wants the
@@ -64,16 +65,30 @@ export default function App() {
 	useEffect(() => {
 		const update = () => setFullscreen(document.fullscreenElement === frame.current);
 		document.addEventListener("fullscreenchange", update);
-		return () => document.removeEventListener("fullscreenchange", update);
+		/* the game's F11, and its Settings' fullscreen (detail: 1 on, 0 off,
+		-1 switch): the page's fullscreen, as the button's */
+		const fromGame = (event) => setPageFullscreen(event.detail);
+		window.addEventListener("halo-fullscreen", fromGame);
+		return () => {
+			document.removeEventListener("fullscreenchange", update);
+			window.removeEventListener("halo-fullscreen", fromGame);
+		};
 	}, []);
 
-	function toggleFullscreen() {
-		if (document.fullscreenElement) {
-			document.exitFullscreen();
-		} else {
+	/* on: true, false, or -1 to switch */
+	function setPageFullscreen(on) {
+		const now = Boolean(document.fullscreenElement);
+		const want = on === -1 ? !now : Boolean(on);
+		if (want && !now) {
 			frame.current.requestFullscreen().catch((error) => setStatus(`Fullscreen: ${error.message}`));
+		} else if (!want && now) {
+			document.exitFullscreen();
 		}
 		frame.current.querySelector("canvas").focus();
+	}
+
+	function toggleFullscreen() {
+		setPageFullscreen(-1);
 	}
 
 	/* the game takes the keyboard back when a panel over it closes */
@@ -93,7 +108,6 @@ export default function App() {
 							}
 							setNotice(answer);
 						}} />}
-					<MultiplayerMenu lobby={lobby} onClose={focusGame} />
 					<OnlineToast lobby={lobby} net={net} onClose={focusGame} />
 					{controlsOpen && <ControlsDialog onClose={() => { setControlsOpen(false); focusGame(); }} />}
 				</div>
@@ -106,7 +120,7 @@ export default function App() {
 					</button>
 					<button type="button" className="bar-button" onClick={toggleFullscreen}
 						aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-						title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen"}>
+						title={fullscreen ? "Exit fullscreen (Esc, F11)" : "Fullscreen (F11)"}>
 						{fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
 					</button>
 				</div>
@@ -193,111 +207,9 @@ function useReleasedPointer(active) {
 	}, [active]);
 }
 
-/* The page's Multiplayer menu, over the game's when it opens (the game's
-stays behind it, for split screen and local games): host an online game,
-which starts at once or waits in the game's lobby for friends, or join a
-friend's with their invite: a browser's, or a desktop game's (native games:
-NETWORK.md). */
-function MultiplayerMenu({ lobby, onClose }) {
-	const [open, setOpen] = useState(false);
-	const [map, setMap] = useState(MAPS[0][0]);
-	const [gameType, setGameType] = useState(GAME_TYPES[0][0]);
-	const [startNow, setStartNow] = useState(true);
-	const [invite, setInvite] = useState("");
-
-	/* (again each time the game's Multiplayer menu opens) */
-	useEffect(() => {
-		setOpen(lobby.phase === "multiplayer-menu");
-	}, [lobby]);
-
-	useReleasedPointer(open);
-
-	if (!open) {
-		return null;
-	}
-
-	function close() {
-		setOpen(false);
-		onClose();
-	}
-
-	function host(event) {
-		event.preventDefault();
-		online.host(map, gameType, { startNow });
-		close();
-	}
-
-	function join(event) {
-		event.preventDefault();
-		if (invite.trim()) {
-			online.join(invite.trim());
-			close();
-		}
-	}
-
-	return (
-		<div className="overlay" role="dialog" aria-modal="true" aria-labelledby="multiplayer-title"
-			onKeyDown={(event) => {
-				/* (the game takes the window's keys: these are the menu's) */
-				event.stopPropagation();
-				if (event.key === "Escape") {
-					close();
-				}
-			}}
-			onKeyUp={(event) => event.stopPropagation()}>
-			<div className="panel">
-				<h2 id="multiplayer-title" className="panel-title">Multiplayer</h2>
-				<form className="panel-section" onSubmit={host}>
-					<h3>Host an online game</h3>
-					<p className="panel-hint">
-						{startNow ?
-							"You start playing right away. Send friends the invite link; they join the game in progress." :
-							"You wait in the lobby. Send friends the invite link, and start the game when everyone is in."}
-					</p>
-					<div className="fields">
-						<label className="field">
-							<span>Map</span>
-							<select value={map} onChange={(event) => setMap(event.target.value)}>
-								{MAPS.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
-							</select>
-						</label>
-						<label className="field">
-							<span>Game type</span>
-							<select value={gameType} onChange={(event) => setGameType(event.target.value)}>
-								{GAME_TYPES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
-							</select>
-						</label>
-					</div>
-					<div className="choice" role="radiogroup" aria-label="When the game starts">
-						<label className={startNow ? "choice-option selected" : "choice-option"}>
-							<input type="radio" name="start" checked={startNow} onChange={() => setStartNow(true)} />
-							Start now
-						</label>
-						<label className={startNow ? "choice-option" : "choice-option selected"}>
-							<input type="radio" name="start" checked={!startNow} onChange={() => setStartNow(false)} />
-							Wait for friends
-						</label>
-					</div>
-					<button type="submit" className="primary-button" autoFocus>Create game</button>
-				</form>
-				<form className="panel-section" onSubmit={join}>
-					<h3>Join a friend</h3>
-					<div className="join-row">
-						<input type="text" value={invite} onChange={(event) => setInvite(event.target.value)}
-							placeholder="Paste an invite link (browser or desktop game)" aria-label="Invite link" spellCheck={false} />
-						<button type="submit" className="secondary-button" disabled={!invite.trim()}>Join</button>
-					</div>
-				</form>
-				<button type="button" className="text-button" onClick={close}>
-					Split screen or local network: use the game's menu
-				</button>
-			</div>
-		</div>
-	);
-}
-
-/* the keyboard and the mouse as controller 1 (port/linux/src/xinput_sdl.c,
-the Linux README's Controls) */
+/* the keyboard and the mouse, as config.toml's [controls] has them by
+default (port/linux/src/port_config.c; the game's Settings > Controls Setup
+changes them), and the menus' keys (port/linux/src/xinput_sdl.c) */
 const PLAYING_CONTROLS = [
 	["Move", ["W", "A", "S", "D"]],
 	["Aim", ["Mouse"]],
@@ -305,26 +217,28 @@ const PLAYING_CONTROLS = [
 	["Throw a grenade", ["Right click", "G"]],
 	["Jump", ["Space"]],
 	["Melee", ["F", "Mouse 4"]],
-	["Action, reload", ["E", "R"]],
-	["Change weapon", ["Tab", "Wheel"]],
+	["Action", ["E"]],
+	["Reload", ["R"]],
+	["Change weapon", ["Wheel", "1"]],
 	["Change grenade", ["X"]],
-	["Crouch", ["Ctrl", "C"]],
+	["Crouch", ["Left Ctrl", "C"]],
 	["Zoom", ["Z", "Middle click"]],
 	["Flashlight", ["Q"]],
+	["Scoreboard", ["Tab"]],
 	["Pause menu", ["Esc"]],
-	["Scoreboard", ["F1"]],
 ];
 
 const MENU_CONTROLS = [
 	["Choose", ["Mouse", "Arrows"]],
-	["Select", ["Left click", "Enter"]],
-	["Back", ["Right click", "Backspace"]],
+	["Select", ["Left click", "Enter", "Space"]],
+	["Back", ["Esc", "Backspace"]],
 	["Scroll", ["Wheel"]],
 ];
 
 const PAGE_CONTROLS = [
 	["Aim with the mouse", ["Click the game"]],
 	["Free the mouse", ["Esc"]],
+	["Fullscreen", ["F11"]],
 	["Developer console", ["`"]],
 ];
 
@@ -382,16 +296,14 @@ function OnlineToast({ lobby, net, onClose }) {
 	const [copied, setCopied] = useState(false);
 	const invite = net?.state === "hosting" ? net.invite : null;
 
-	const waiting = lobby.phase === "lobby";
 	let toast = null;
 	if (invite && invite !== dismissed) {
-		toast = waiting ?
-			{ key: invite, title: "Waiting for friends", text: "Share the link, then start when everyone is in." } :
-			{ key: invite, title: "Your game is online", text: "Invite friends with this link. They join the game in progress." };
+		toast = { key: invite, title: "Your game is online",
+			text: "Invite friends with this link (the game's lobby has it too). They can join a game in progress." };
 	} else if (lobby.phase === "joining" || (net?.state === "connecting" && /#join=/.test(location.hash))) {
 		toast = { key: "joining", title: "Joining your friend's game…" };
 	} else if (lobby.phase === "failed" && dismissed !== lobby.message) {
-		toast = { key: lobby.message, title: "Could not start the online game", text: lobby.message, error: true };
+		toast = { key: lobby.message, title: "Could not join the game", text: lobby.message, error: true };
 	} else if (net?.state === "error" && dismissed !== net.error) {
 		toast = { key: net.error, title: "Online play stopped", text: net.error, error: true };
 	}
@@ -419,12 +331,9 @@ function OnlineToast({ lobby, net, onClose }) {
 				{toast.text && <span>{toast.text}</span>}
 			</div>
 			{toast.key === invite && (
-				<button type="button" className={waiting ? "secondary-button" : "primary-button"} onClick={copy}>
+				<button type="button" className="primary-button" onClick={copy}>
 					{copied ? "Copied" : "Copy invite link"}
 				</button>
-			)}
-			{toast.key === invite && waiting && (
-				<button type="button" className="primary-button" onClick={() => { online.start(); onClose(); }}>Start game</button>
 			)}
 			{toast.key !== "joining" && (
 				<button type="button" className="toast-close" onClick={dismiss} aria-label="Dismiss">×</button>
@@ -438,7 +347,11 @@ hosting, joining, and why it failed */
 function NetStatus({ net }) {
 	const [copied, setCopied] = useState(false);
 
-	if (!net || net.state === "idle") {
+	/* a room's state (browsers' games), else the relay's (desktop builds'
+	games: relay_bridge.js), once the game has reached it */
+	const state = net && net.state !== "idle" ? net.state :
+		net?.relay ? `relay-${net.relay.startsWith("error") ? "error" : net.relay}` : null;
+	if (!state) {
 		return null;
 	}
 	const players = `${net.players} ${net.players === 1 ? "player" : "players"}`;
@@ -448,12 +361,11 @@ function NetStatus({ net }) {
 		/* (the host's game is then in Multiplayer, System Link) */
 		joined: "Connected to the host",
 		error: `Network: ${net.error}`,
-		/* native games, through the relay (relay_bridge.js) */
 		"relay-connecting": "Reaching the relay…",
 		"relay-connected": "Relay connected",
 		"relay-disconnected": "Relay lost: reconnecting…",
-		"relay-error": `Relay: ${net.error}`,
-	}[net.state];
+		"relay-error": `Relay: ${net.relay?.slice("error: ".length)}`,
+	}[state];
 
 	function copy() {
 		navigator.clipboard.writeText(net.invite).then(() => {
@@ -463,7 +375,7 @@ function NetStatus({ net }) {
 	}
 
 	return (
-		<span className={`net net-${net.state}`}>
+		<span className={`net net-${state}`}>
 			<span className="net-text" title={text}>{text}</span>
 			{net.state === "hosting" && net.invite && (
 				<button type="button" className="net-button" onClick={copy} title={net.invite}>

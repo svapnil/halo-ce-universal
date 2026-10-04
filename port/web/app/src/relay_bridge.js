@@ -12,8 +12,12 @@ then the body. This passes each record to the relay as one binary message
 record; it knows nothing of what they hold, but for the relay's pings,
 which it answers itself (so the relay measures the way to the page).
 
-Before each connection it asks the site's Worker (worker/relay.js) where the
-relay is and for a token, which the relay takes once.
+It connects only when the game first sends the relay something (the
+desktop's internet play starts only when a desktop build's game is joined
+or browsed for: web_p2p_select.c), so a page that never does takes no
+relay session. Before each connection it asks the site's Worker
+(worker/relay.js) where the relay is and for a token, which the relay
+takes once.
 */
 
 const MAGIC = 0x524c4159;
@@ -67,6 +71,7 @@ export function startRelayBridge(module, { onStatus = () => {} } = {}) {
 	/* records to the game while its ring is full */
 	const held = [];
 	let socket = null;
+	let connecting = false;
 	let waitingForRoom = false;
 	let lostToRelay = 0;
 	let lostToGame = 0;
@@ -92,10 +97,16 @@ export function startRelayBridge(module, { onStatus = () => {} } = {}) {
 	function toRelay(message) {
 		if (socket?.readyState === WebSocket.OPEN) {
 			socket.send(message);
-		} else if (unsent.length < MAXIMUM_HELD) {
+			return;
+		}
+		if (unsent.length < MAXIMUM_HELD) {
 			unsent.push(message);
 		} else {
 			lostToRelay++;
+		}
+		/* (the game's first record: the relay is needed now) */
+		if (!socket && !connecting) {
+			connect();
 		}
 	}
 
@@ -185,6 +196,7 @@ export function startRelayBridge(module, { onStatus = () => {} } = {}) {
 	}
 
 	async function connect() {
+		connecting = true;
 		onStatus({ state: "connecting" });
 		let address;
 		try {
@@ -201,6 +213,7 @@ export function startRelayBridge(module, { onStatus = () => {} } = {}) {
 			setTimeout(connect, RETRY_TIME);
 			return;
 		}
+		connecting = false;
 		socket.binaryType = "arraybuffer";
 		socket.onopen = () => {
 			onStatus({ state: "connected", address });
@@ -229,5 +242,4 @@ export function startRelayBridge(module, { onStatus = () => {} } = {}) {
 	}, 10 * 1000);
 
 	readLoop();
-	connect();
 }

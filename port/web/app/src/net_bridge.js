@@ -17,6 +17,8 @@ A transport has:
 		receive(link, channel, bytes) })
 	send(link, channel, bytes)    channel: "reliable" or "unreliable"
 	hosting(isHosting)            optional: the game started or stopped hosting
+	join(text)                    optional: join the room of a browser's invite
+	                              (the game's menus' Direct Link)
 Links are numbered 0 to 127 by the transport; identifiers are the 6 bytes
 the machines' XNADDRs carry.
 */
@@ -35,7 +37,7 @@ const IN_RING = OUT_RING + 16 + RING_SIZE;
 const RING_DATA = 16;
 
 /* the records each way */
-const OUT_TYPES = ["reliable", "unreliable", "hosting", "not-hosting"];
+const OUT_TYPES = ["reliable", "unreliable", "hosting", "not-hosting", "join"];
 const IN_TYPES = { "link-up": 0, "link-down": 1, reliable: 2, unreliable: 3 };
 /* records from the transport held while the ring to the game is full;
 past this many, unreliable ones are lost */
@@ -94,6 +96,9 @@ export function startNetBridge(module, transport) {
 			const type = OUT_TYPES[header[3]];
 			if (type === "reliable" || type === "unreliable") {
 				transport.send(header[2], type, body);
+			} else if (type === "join") {
+				/* (a browser's invite, from the game's menus: Direct Link) */
+				transport.join?.(new TextDecoder().decode(body));
 			} else if (type) {
 				transport.hosting?.(type === "hosting");
 			}

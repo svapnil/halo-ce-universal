@@ -14,13 +14,14 @@ Status:
   transports: through the SFU (`app/src/sfu_transport.js`, the default),
   and between the pages of one browser (`app/src/tab_transport.js`,
   `?net=tabs`), and the lobby (`src/web_lobby.c`, `app/src/lobby.js`):
-  the page's own Multiplayer menu hosts a game that starts at once, and a
-  page opened with its invite joins it, in progress, with no menus. Refer
-  to "The lobby" and "Testing".
+  the game's own menus (the PC version's, as upstream's) host and join, and
+  a page opened with an invite joins its game, in progress. Refer to "The
+  lobby" and "Testing".
 - Deployed at openhaloce.com (its secrets: `wrangler secret put`).
 - Native games: a browser joins a desktop build's game through a relay, on
-  Fly.io (refer to "Native games"). A page hosts for browsers only.
-- To do: a server browser (rooms that list themselves).
+  Fly.io, by its invite or from the PC menus' server browser (refer to
+  "Native games"). A page hosts for browsers only.
+- To do: browsers' rooms in the server browser (rooms that list themselves).
 
 ## Parts
 
@@ -177,17 +178,20 @@ streams reliable, and DTLS encrypts every data channel.
 This repository takes changes from upstream, which has no browser build. So
 the browser's network code implements upstream's interfaces, and the web
 build chooses it. Upstream's files change only in a few places, each in
-`#ifdef __EMSCRIPTEN__` (refer to "The lobby" for the first three):
+`#ifdef __EMSCRIPTEN__`:
 
 - `source/networking/network_server_manager.c`: a host starts its game
   alone (`server_ok_to_countdown`, `network_game_server_game_can_start`).
-- `source/interface/ui_widget.c`: a screen that opens is told to
-  `web_lobby.c` (in the port's block in `ui_widget_launch_widget`).
 - `port/linux/src/sdl_platform.c`: the mouse is not captured at start-up
-  (a page would lock it at the first click, in the menus), and a hidden
-  page plays on a 33 ms timer (`web_wait_for_frame`, the fork's own).
+  (a page would lock it at the first click, in the menus), a hidden page
+  plays on a 33 ms timer (`web_wait_for_frame`, the fork's own), and the
+  game's fullscreen (F11, Settings) is the page's (`web_page_fullscreen`:
+  the page's panels along, as its button does).
 - `source/main/main.c` is not changed: the web build renames its call of
-  `network_test_update` to `web_frame_update` (`WEB_GAME_RENAMES`).
+  `network_test_update` to `web_frame_update` (`WEB_GAME_RENAMES`); nor is
+  `sdl_platform.c`'s clipboard used: the web build renames it out of the
+  way (`WEB_PLATFORM_RENAMES`) for `src/web_clipboard.c`'s, on the page's
+  thread.
 
 The layers:
 
@@ -195,7 +199,7 @@ The layers:
 | --- | --- | --- |
 | The game, its Winsock calls | `source/` | the same |
 | Winsock, XNet, virtual addresses, routing to peers | `port/linux/src/xnet.c` | the same |
-| Internet play: `p2p.h` | `p2p.c`, `p2p_signal.c`, `p2p_crypto.c`, `p2p_discord.c`, `posix_upnp.c` | `port/web/src/web_p2p.c` instead |
+| Internet play: `p2p.h` | `p2p.c`, `p2p_signal.c`, `p2p_lobby.c`, `p2p_crypto.c`, `p2p_discord.c`, `posix_upnp.c` | `port/web/src/web_p2p.c` beside the same (`web_p2p_select.c`; "Native games") |
 | Sockets: `posix_socket_*` in `posix.h` | `posix_net.c` | `port/web/src/web_net.c` |
 
 1. `web_net.c`: the `posix_socket_*` functions as sockets in memory
@@ -208,8 +212,8 @@ The layers:
 2. `web_p2p.c`: all of `p2p.h`, over the links, as `p2p.c` over its
    tunnel: each peer a virtual address (from its identifier), its
    datagrams and streams framed as above, and its stand-ins the sockets of
-   step 1. `tools/web_build.py` leaves the desktop's internet play units
-   out.
+   step 1. The desktop's own runs beside it, for desktop builds' games
+   ("Native games").
 3. The bridge (below) from `web_p2p.c`'s thread to a transport on the
    page's main thread (`RTCPeerConnection` exists only there). The page
    will read `netVersion` from the game (`HALO_PORT_NETWORK_VERSION`), not
@@ -224,45 +228,43 @@ refuse a joiner of another version than the host.
 
 ## The lobby
 
-The page offers online games itself, over the game's menus (`App.jsx`):
+The game's own menus host and join, as on the desktop: the PC version's
+(upstream's, `display.menus = "pc"`). Their Multiplayer has, for a browser:
 
-- When the game's Multiplayer menu opens, the page's shows over it: host an
-  online game (a map and a game type), or join a friend's with their
-  invite. "Split screen or local network" leaves the game's own menu,
-  whose System Link still lists the games the page's links reach.
-- Create game hosts the game. With "Start now" (the default) it starts at
-  once: the host plays alone until friends come, and they join it in
-  progress. With "Wait for friends" the host waits in the game's own lobby
-  (its Select Teams screen), where friends who open the invite arrive (a
-  team game puts them on the other team), until the host starts the game:
-  the page's Start game, or the lobby's own (A). Either way the host's page
-  shows the invite to copy.
-- A page opened with an invite (`#join=`) links to the host, and its game
-  then finds the host's game and joins it, in progress, with no menus.
+- Create Game > Internet: the game hosts, and the page makes it a room
+  (`web_p2p.c` tells it, as the game listens), whose invite
+  (`https://<site>/#join=<room>.<secret>`) the page shows to copy and the
+  menus show too (Server Settings' invite, the lobby's "Invite link
+  copied": `p2p_invite_link`, which the page writes into the game). Create
+  Game > LAN makes no room (`p2p_set_hosting_allowed`).
+- Join Game > Direct Link: PASTE LINK joins the invite on the clipboard,
+  a browser's (the page joins its room) or a desktop build's (the desktop's
+  internet play, through the relay). The clipboard is read then only
+  (`src/web_clipboard.c`; `network.join_from_clipboard` is off in the
+  browser), which the browser may ask the player to allow, once.
+- Join Game > Server Browser: desktop builds' public games ("Native
+  games").
 
-`web_lobby.c` does this in the game, once a frame on the game's thread
-(`web_frame_update`, which main.c calls in place of `network_test_update`,
-and which calls it first). Hosting and joining take network_test.c's own
-steps: the fast setup of a server, the map and game type, the player of
-controller 1 and an immediate start (or none, for the lobby: a `start`
-request, or the game's own Start, starts it later); the first game the
-search finds, then a team. The game starts with one machine and one player in the
+A page opened with an invite (`#join=` a browser's, `#native=` a desktop
+build's) links to its host, and its game then finds the host's game and
+joins it, in progress, from the main menu: `web_lobby.c` does this in the
+game, once a frame on the game's thread (`web_frame_update`, which main.c
+calls in place of `network_test_update`, and which calls it first), with
+network_test.c's own steps (the first game the search finds), then opens
+the menus' lobby. The game starts with one machine and one player in the
 browser build (the Xbox wanted two machines), and players join it in
 progress (`port/linux/NETCODE.md`, "Joining a game in progress").
 
 The page and the game share a mailbox (`struct web_lobby_mailbox`, in the
-game's memory): the page writes a request (`host` with a map, a game type
-and whether to start now; `start`; or `join`) and raises
-`request_sequence`; the game writes its phase (`main-menu`,
-`multiplayer-menu`, `starting`, `lobby`, `hosting`, `joining`, `joined`,
-`failed` with a message) and raises and notifies `event_sequence`. `ui_widget.c` tells `web_lobby.c` which screen opens,
-as nothing else in the game says that its Multiplayer menu is up.
+game's memory): the page writes a request (`join`) and raises
+`request_sequence`; the game writes its phase (`main-menu`, `joining`,
+`joined`, `failed` with a message) and raises and notifies
+`event_sequence`.
 
-While the page's menu shows, the mouse is the page's (a locked pointer
-sends every click to the game), and the menu's keys do not reach the game.
 The game starts windowed (`HALO_FULLSCREEN=0`, `game.js`): its own
 fullscreen would take the bare canvas fullscreen and hide the page's
-panels; the page's fullscreen button takes them along.
+panels; the page's fullscreen (its button, F11, the game's Settings) takes
+them along.
 
 ## The bridge
 
@@ -321,12 +323,14 @@ menus a bot presses A at random) ended with both pages at 30 ticks a
 second, the same scores, and all 37 hits the joiner reported dealt by the
 host.
 
-The whole of it, as a player does it, driven in a headless Chrome: a page at the main menu, the arrow down and Enter to Multiplayer, the page's
-menu, Damnation and Team Slayer, Create game: the host was playing on
-Damnation 3 seconds later, its invite shown; a second page opened with the
-invite was playing in that game 5 seconds after it opened. With "Wait for
-friends", both pages were in the lobby's Select Teams screen (the friend on
-the other team), and Start game in the host's page took both into the game.
+With the PC menus, driven in a headless Chrome with keys
+(`relay/test/drive.mjs` for the pages, key presses through Chrome's
+DevTools protocol): Multiplayer > Create Game > Internet hosted, and the
+page made its room and showed its invite; Create Game > LAN made none; a
+second browser opened with the room's invite was playing in that game,
+joined in progress, 2 seconds after its game reached the main menu; and
+Join Game > Server Browser listed the desktop builds' public games on the
+internet, through the relay.
 
 ## Native games
 
@@ -346,15 +350,21 @@ them. What a browser lacks, real sockets, a relay lends it:
                                           └──────────────────┘  TCP     └──────────────┘
 ```
 
-- **Which internet play.** Both `web_p2p.c` and `p2p.c` implement `p2p.h`.
-  `tools/web_build.py` compiles them with its functions renamed
+- **Both internet plays.** `web_p2p.c` and `p2p.c` both implement
+  `p2p.h`. `tools/web_build.py` compiles them with its functions renamed
   (`p2p_web_*`, `p2p_native_*`), and `src/web_p2p_select.c` gives the game
-  the one the page chose (`HALO_NET_NATIVE`). The page chooses the
-  desktop's when it is opened with `#native=<invite>`, and then joins that
-  game. A page plays with browsers or with desktop builds, not both at once,
-  and hosts for browsers only: hosting for desktop builds' players would
-  have the relay carry every joiner's traffic, and a host's page in the
-  background slow the game for all of them.
+  both at once: one machine with one identifier (the desktop's, which its
+  tunnel proves; the rooms are told it too), whose peers are each the one's
+  that has them. The desktop's starts only when first needed, for a desktop
+  build's invite or the server browser, so a page that never needs it
+  never reaches the relay (`relay_bridge.js` connects at the game's first
+  record). It never hosts: a page hosts for browsers only, as hosting for
+  desktop builds' players would have the relay carry every joiner's
+  traffic, and a host's page in the background slow the game for all of
+  them.
+- **The server browser.** The PC menus' Join Game > Server Browser lists
+  desktop builds' public games (`p2p_lobby.c`, through the MQTT brokers),
+  and joins one by its invite, as Direct Link does.
 - **Sockets.** `p2p.c` keeps its stand-ins on this machine, as `web_p2p.c`
   does, and only its tunnel's socket and its brokers' connections go to the
   internet. `web_net.c` sends a socket's datagrams and connections there
@@ -387,11 +397,9 @@ them. What a browser lacks, real sockets, a relay lends it:
   each way, and the loss of the desktop's tunnel packets on their way to
   it, from the packet numbers in their header (which is authenticated, not
   encrypted).
-- **The page's menus.** The Multiplayer menu's Join takes either kind of
-  invite. A desktop build's starts the page again, at `#native=<invite>`,
-  as the game's internet play is chosen as it starts; and Host, on a page
-  that joined a desktop build's game, starts it again with browsers' (at
-  `#host=<map>.<game type>.<now or wait>`, which it then hosts).
+- **Invites.** A page opened at `#native=<invite>` joins that game
+  (`HALO_NET_NATIVE_INVITE`, as the game's internet play starts; then "The
+  lobby"); Direct Link's PASTE LINK takes one too.
 - **Where it runs.** On Fly.io (`relay/fly.toml`: the app `halo-web-relay`,
   in iad), not on Workers, which have no UDP. What Fly does with UDP, as
   found in deploying it:

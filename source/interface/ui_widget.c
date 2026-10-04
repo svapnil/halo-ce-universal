@@ -2369,14 +2369,6 @@ static struct widget_instance *ui_widget_launch_widget(
 		char const *name = tag_get_name(new_widget_tag_index);
 		char build[0x20];
 
-#ifdef __EMSCRIPTEN__
-		/* (the browser build's page shows its own menu over the game's
-		Multiplayer menu: port/web/src/web_lobby.c) */
-		void web_ui_widget_launching(char const *name);
-
-		web_ui_widget_launching(name);
-#endif
-
 		if (name &&
 			!csstrncmp(name, multiplayer_menus, sizeof(multiplayer_menus) - 1) &&
 			!cache_files_multiplayer_region(build))
