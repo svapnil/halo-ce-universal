@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { online, startGame } from "./game.js";
-import { GAME_TYPES, MAPS } from "./lobby.js";
+import { CrashPanel, SaveLogButton } from "./CrashPanel.jsx";
+import { startGame } from "./game.js";
+import { keepFromBrowser } from "./keys.js";
 
 /* The game's canvas. It never re-renders: the game owns it once started
 (game.js). */
@@ -23,7 +24,7 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
 				event.currentTarget.focus();
 				captureMouse(event.currentTarget);
 			}}
-			onKeyDown={(event) => GAME_KEYS.has(event.code) && event.preventDefault()}
+			onKeyDown={(event) => keepFromBrowser(event) && event.preventDefault()}
 			// the keyboard back from a panel over the game, which kept the
 			// releases of keys pressed before it (sdl_platform.c's
 			// web_reset_keyboard); not there before the game has started
@@ -31,14 +32,6 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
 		/>
 	);
 }, () => true);
-
-/* The game's keys that the browser also acts on (Tab leaves the canvas,
-Space and the arrows scroll, F1 opens help). SDL means to keep them from the
-browser, but it sees them on the game's thread, after the browser has acted:
-the canvas keeps them itself. (The game still gets them.) */
-const GAME_KEYS = new Set([
-	"Tab", "Space", "Backspace", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "F1",
-]);
 
 /* the pointer lock back at a click on the game, while the game wants the
 mouse (sdl_platform.c's web_mouse_wants_capture): only a request in the
@@ -58,22 +51,56 @@ export default function App() {
 	const [lobby, setLobby] = useState({ phase: "other", message: "" });
 	const [fullscreen, setFullscreen] = useState(false);
 	const [controlsOpen, setControlsOpen] = useState(false);
+	/* the game's volume, a percentage: null until the game tells it */
+	const [volume, setVolume] = useState(null);
+	const volumeKept = useRef(null);
 	/* the notice's answer: the game starts only once it is confirmed */
 	const [notice, setNotice] = useState(() => noticeConfirmed() ? "confirmed" : "pending");
 
 	useEffect(() => {
 		const update = () => setFullscreen(document.fullscreenElement === frame.current);
 		document.addEventListener("fullscreenchange", update);
-		return () => document.removeEventListener("fullscreenchange", update);
+		/* the game's F11, and its Settings' fullscreen (detail: 1 on, 0 off,
+		-1 switch): the page's fullscreen, as the button's */
+		const fromGame = (event) => setPageFullscreen(event.detail);
+		window.addEventListener("halo-fullscreen", fromGame);
+		/* the game's volume, as it starts and when its Settings change it
+		(dsound_sdl.c's web_volume_tell_page) */
+		const volumeFromGame = (event) => setVolume(event.detail);
+		window.addEventListener("halo-volume", volumeFromGame);
+		return () => {
+			document.removeEventListener("fullscreenchange", update);
+			window.removeEventListener("halo-fullscreen", fromGame);
+			window.removeEventListener("halo-volume", volumeFromGame);
+		};
 	}, []);
 
-	function toggleFullscreen() {
-		if (document.fullscreenElement) {
-			document.exitFullscreen();
-		} else {
+	/* The bar's volume is the game's own: config.toml's audio.volume, which
+	the game's Settings > Audio shows as MASTER VOLUME and the browser keeps
+	with the saves (web_main.c). The game follows the control as it moves,
+	and writes its settings once the control has come to rest (dsound_sdl.c's
+	web_set_volume). */
+	function changeVolume(percent) {
+		setVolume(percent);
+		window.Module?._web_set_volume?.(percent, 0);
+		clearTimeout(volumeKept.current);
+		volumeKept.current = setTimeout(() => window.Module?._web_set_volume?.(percent, 1), VOLUME_KEEP_DELAY);
+	}
+
+	/* on: true, false, or -1 to switch */
+	function setPageFullscreen(on) {
+		const now = Boolean(document.fullscreenElement);
+		const want = on === -1 ? !now : Boolean(on);
+		if (want && !now) {
 			frame.current.requestFullscreen().catch((error) => setStatus(`Fullscreen: ${error.message}`));
+		} else if (!want && now) {
+			document.exitFullscreen();
 		}
 		frame.current.querySelector("canvas").focus();
+	}
+
+	function toggleFullscreen() {
+		setPageFullscreen(-1);
 	}
 
 	/* the game takes the keyboard back when a panel over it closes */
@@ -93,25 +120,81 @@ export default function App() {
 							}
 							setNotice(answer);
 						}} />}
-					<MultiplayerMenu lobby={lobby} onClose={focusGame} />
 					<OnlineToast lobby={lobby} net={net} onClose={focusGame} />
+					<CrashPanel />
 					{controlsOpen && <ControlsDialog onClose={() => { setControlsOpen(false); focusGame(); }} />}
 				</div>
 				<div className="bar">
 					<span className="status">{status}</span>
 					<NetStatus net={net} />
+					<SaveLogButton />
+					<VolumeControl volume={volume} onChange={changeVolume} onDone={focusGame} />
 					<button type="button" className="bar-button" onClick={() => setControlsOpen(!controlsOpen)}
 						aria-label="Controls" aria-expanded={controlsOpen} title="Controls">
 						<ControlsIcon />
 					</button>
 					<button type="button" className="bar-button" onClick={toggleFullscreen}
 						aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-						title={fullscreen ? "Exit fullscreen (Esc)" : "Fullscreen"}>
+						title={fullscreen ? "Exit fullscreen (F11, or hold Esc)" : "Fullscreen (F11): the game takes every key"}>
 						{fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
 					</button>
 				</div>
 			</div>
 		</main>
+	);
+}
+
+/* how long the volume control rests before the game writes its settings
+(ms) */
+const VOLUME_KEEP_DELAY = 300;
+
+/* The bar's volume: an icon, which shows how loud the game is. A click on it
+shows the slider, until another click on it, a click elsewhere or Esc.
+Without a volume yet (the game has not started), there is none to change. */
+function VolumeControl({ volume, onChange, onDone }) {
+	const control = useRef(null);
+	const [open, setOpen] = useState(false);
+	const known = volume !== null;
+
+	useEffect(() => {
+		if (!open) {
+			return undefined;
+		}
+		/* (as the click goes down, before the game's canvas has it) */
+		const outside = (event) => !control.current.contains(event.target) && setOpen(false);
+		document.addEventListener("pointerdown", outside, true);
+		return () => document.removeEventListener("pointerdown", outside, true);
+	}, [open]);
+
+	function close() {
+		setOpen(false);
+		onDone();
+	}
+
+	return (
+		<div ref={control} className="volume"
+			onKeyDown={(event) => {
+				/* (the game takes the window's keys: these are the control's) */
+				event.stopPropagation();
+				if (event.key === "Escape" && open) {
+					close();
+				}
+			}}
+			onKeyUp={(event) => event.stopPropagation()}>
+			{/* (to the icon's left: the icon stays where it was clicked) */}
+			{open && (
+				<input type="range" className="volume-slider" min="0" max="100" step="1" value={volume}
+					onChange={(event) => onChange(Number(event.target.value))}
+					// (the keyboard back to the game once the mouse lets go)
+					onPointerUp={onDone}
+					aria-label="Volume" title={`Volume: ${volume}%`} autoFocus />
+			)}
+			<button type="button" className="bar-button" onClick={() => open ? close() : setOpen(true)}
+				disabled={!known} aria-label="Volume" aria-expanded={open}
+				title={known ? `Volume: ${volume}%` : "Volume"}>
+				<VolumeIcon volume={volume ?? 100} />
+			</button>
+		</div>
 	);
 }
 
@@ -193,110 +276,9 @@ function useReleasedPointer(active) {
 	}, [active]);
 }
 
-/* The page's Multiplayer menu, over the game's when it opens (the game's
-stays behind it, for split screen and local games): host an online game,
-which starts at once or waits in the game's lobby for friends, or join a
-friend's with their invite. */
-function MultiplayerMenu({ lobby, onClose }) {
-	const [open, setOpen] = useState(false);
-	const [map, setMap] = useState(MAPS[0][0]);
-	const [gameType, setGameType] = useState(GAME_TYPES[0][0]);
-	const [startNow, setStartNow] = useState(true);
-	const [invite, setInvite] = useState("");
-
-	/* (again each time the game's Multiplayer menu opens) */
-	useEffect(() => {
-		setOpen(lobby.phase === "multiplayer-menu");
-	}, [lobby]);
-
-	useReleasedPointer(open);
-
-	if (!open) {
-		return null;
-	}
-
-	function close() {
-		setOpen(false);
-		onClose();
-	}
-
-	function host(event) {
-		event.preventDefault();
-		online.host(map, gameType, { startNow });
-		close();
-	}
-
-	function join(event) {
-		event.preventDefault();
-		if (invite.trim()) {
-			online.join(invite.trim());
-			close();
-		}
-	}
-
-	return (
-		<div className="overlay" role="dialog" aria-modal="true" aria-labelledby="multiplayer-title"
-			onKeyDown={(event) => {
-				/* (the game takes the window's keys: these are the menu's) */
-				event.stopPropagation();
-				if (event.key === "Escape") {
-					close();
-				}
-			}}
-			onKeyUp={(event) => event.stopPropagation()}>
-			<div className="panel">
-				<h2 id="multiplayer-title" className="panel-title">Multiplayer</h2>
-				<form className="panel-section" onSubmit={host}>
-					<h3>Host an online game</h3>
-					<p className="panel-hint">
-						{startNow ?
-							"You start playing right away. Send friends the invite link; they join the game in progress." :
-							"You wait in the lobby. Send friends the invite link, and start the game when everyone is in."}
-					</p>
-					<div className="fields">
-						<label className="field">
-							<span>Map</span>
-							<select value={map} onChange={(event) => setMap(event.target.value)}>
-								{MAPS.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
-							</select>
-						</label>
-						<label className="field">
-							<span>Game type</span>
-							<select value={gameType} onChange={(event) => setGameType(event.target.value)}>
-								{GAME_TYPES.map(([value, name]) => <option key={value} value={value}>{name}</option>)}
-							</select>
-						</label>
-					</div>
-					<div className="choice" role="radiogroup" aria-label="When the game starts">
-						<label className={startNow ? "choice-option selected" : "choice-option"}>
-							<input type="radio" name="start" checked={startNow} onChange={() => setStartNow(true)} />
-							Start now
-						</label>
-						<label className={startNow ? "choice-option" : "choice-option selected"}>
-							<input type="radio" name="start" checked={!startNow} onChange={() => setStartNow(false)} />
-							Wait for friends
-						</label>
-					</div>
-					<button type="submit" className="primary-button" autoFocus>Create game</button>
-				</form>
-				<form className="panel-section" onSubmit={join}>
-					<h3>Join a friend</h3>
-					<div className="join-row">
-						<input type="text" value={invite} onChange={(event) => setInvite(event.target.value)}
-							placeholder="Paste an invite link" aria-label="Invite link" spellCheck={false} />
-						<button type="submit" className="secondary-button" disabled={!invite.trim()}>Join</button>
-					</div>
-				</form>
-				<button type="button" className="text-button" onClick={close}>
-					Split screen or local network: use the game's menu
-				</button>
-			</div>
-		</div>
-	);
-}
-
-/* the keyboard and the mouse as controller 1 (port/linux/src/xinput_sdl.c,
-the Linux README's Controls) */
+/* the keyboard and the mouse, as config.toml's [controls] has them by
+default (port/linux/src/port_config.c; the game's Settings > Controls Setup
+changes them), and the menus' keys (port/linux/src/xinput_sdl.c) */
 const PLAYING_CONTROLS = [
 	["Move", ["W", "A", "S", "D"]],
 	["Aim", ["Mouse"]],
@@ -304,26 +286,30 @@ const PLAYING_CONTROLS = [
 	["Throw a grenade", ["Right click", "G"]],
 	["Jump", ["Space"]],
 	["Melee", ["F", "Mouse 4"]],
-	["Action, reload", ["E", "R"]],
-	["Change weapon", ["Tab", "Wheel"]],
+	["Action", ["E"]],
+	["Reload", ["R"]],
+	["Change weapon", ["Wheel", "1"]],
 	["Change grenade", ["X"]],
-	["Crouch", ["Ctrl", "C"]],
+	["Crouch", ["Left Ctrl", "C"]],
 	["Zoom", ["Z", "Middle click"]],
 	["Flashlight", ["Q"]],
+	["Scoreboard", ["Tab"]],
 	["Pause menu", ["Esc"]],
-	["Scoreboard", ["F1"]],
 ];
 
 const MENU_CONTROLS = [
 	["Choose", ["Mouse", "Arrows"]],
-	["Select", ["Left click", "Enter"]],
-	["Back", ["Right click", "Backspace"]],
+	["Select", ["Left click", "Enter", "Space"]],
+	["Back", ["Esc", "Backspace"]],
 	["Scroll", ["Wheel"]],
 ];
 
 const PAGE_CONTROLS = [
 	["Aim with the mouse", ["Click the game"]],
 	["Free the mouse", ["Esc"]],
+	["Fullscreen", ["F11"]],
+	["Leave fullscreen", ["F11", "Hold Esc", "Alt+Tab"]],
+	["Keep Ctrl+W and the like for the game", ["Play in fullscreen"]],
 	["Developer console", ["`"]],
 ];
 
@@ -381,16 +367,14 @@ function OnlineToast({ lobby, net, onClose }) {
 	const [copied, setCopied] = useState(false);
 	const invite = net?.state === "hosting" ? net.invite : null;
 
-	const waiting = lobby.phase === "lobby";
 	let toast = null;
 	if (invite && invite !== dismissed) {
-		toast = waiting ?
-			{ key: invite, title: "Waiting for friends", text: "Share the link, then start when everyone is in." } :
-			{ key: invite, title: "Your game is online", text: "Invite friends with this link. They join the game in progress." };
+		toast = { key: invite, title: "Your game is online",
+			text: "Invite friends with this link (the game's lobby has it too). They can join a game in progress." };
 	} else if (lobby.phase === "joining" || (net?.state === "connecting" && /#join=/.test(location.hash))) {
 		toast = { key: "joining", title: "Joining your friend's game…" };
 	} else if (lobby.phase === "failed" && dismissed !== lobby.message) {
-		toast = { key: lobby.message, title: "Could not start the online game", text: lobby.message, error: true };
+		toast = { key: lobby.message, title: "Could not join the game", text: lobby.message, error: true };
 	} else if (net?.state === "error" && dismissed !== net.error) {
 		toast = { key: net.error, title: "Online play stopped", text: net.error, error: true };
 	}
@@ -418,12 +402,9 @@ function OnlineToast({ lobby, net, onClose }) {
 				{toast.text && <span>{toast.text}</span>}
 			</div>
 			{toast.key === invite && (
-				<button type="button" className={waiting ? "secondary-button" : "primary-button"} onClick={copy}>
+				<button type="button" className="primary-button" onClick={copy}>
 					{copied ? "Copied" : "Copy invite link"}
 				</button>
-			)}
-			{toast.key === invite && waiting && (
-				<button type="button" className="primary-button" onClick={() => { online.start(); onClose(); }}>Start game</button>
 			)}
 			{toast.key !== "joining" && (
 				<button type="button" className="toast-close" onClick={dismiss} aria-label="Dismiss">×</button>
@@ -437,7 +418,11 @@ hosting, joining, and why it failed */
 function NetStatus({ net }) {
 	const [copied, setCopied] = useState(false);
 
-	if (!net || net.state === "idle") {
+	/* a room's state (browsers' games), else the relay's (desktop builds'
+	games: relay_bridge.js), once the game has reached it */
+	const state = net && net.state !== "idle" ? net.state :
+		net?.relay ? `relay-${net.relay.startsWith("error") ? "error" : net.relay}` : null;
+	if (!state) {
 		return null;
 	}
 	const players = `${net.players} ${net.players === 1 ? "player" : "players"}`;
@@ -447,7 +432,11 @@ function NetStatus({ net }) {
 		/* (the host's game is then in Multiplayer, System Link) */
 		joined: "Connected to the host",
 		error: `Network: ${net.error}`,
-	}[net.state];
+		"relay-connecting": "Reaching the relay…",
+		"relay-connected": "Relay connected",
+		"relay-disconnected": "Relay lost: reconnecting…",
+		"relay-error": `Relay: ${net.relay?.slice("error: ".length)}`,
+	}[state];
 
 	function copy() {
 		navigator.clipboard.writeText(net.invite).then(() => {
@@ -457,7 +446,7 @@ function NetStatus({ net }) {
 	}
 
 	return (
-		<span className={`net net-${net.state}`}>
+		<span className={`net net-${state}`}>
 			<span className="net-text" title={text}>{text}</span>
 			{net.state === "hosting" && net.invite && (
 				<button type="button" className="net-button" onClick={copy} title={net.invite}>
@@ -473,6 +462,18 @@ function ControlsIcon() {
 		<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
 			<rect x="2" y="6" width="20" height="12" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
 			<path d="M6 10h1M10 10h1M14 10h1M18 10h1M7 14h10" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+		</svg>
+	);
+}
+
+function VolumeIcon({ volume }) {
+	return (
+		<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+			<path d="M3 9.5h3.5L11 6v12l-4.5-3.5H3z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+			{volume === 0 ?
+				<path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /> :
+				<path d={volume < 50 ? "M15 9.5a3.5 3.5 0 0 1 0 5" : "M15 9.5a3.5 3.5 0 0 1 0 5M17.5 6.5a7.5 7.5 0 0 1 0 11"}
+					fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
 		</svg>
 	);
 }

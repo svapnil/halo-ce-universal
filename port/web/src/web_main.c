@@ -30,6 +30,8 @@ itself and drop the links: the first version of this file did.
 #include <unistd.h>
 
 int halo_main(void);
+/* web_crash.c's */
+void web_crash_exited(int code);
 /* (sys/stat.h's: the game's include paths hide it) */
 int mkdir(const char *path, unsigned int mode);
 
@@ -141,8 +143,19 @@ static void mount_saves(void)
 		if (symlink(target, link) != 0)
 			printf("web: cannot link %s\n", link);
 	}
+	/* the settings too (port_config.c reads and writes config.toml in the
+	executable's folder, /: what the game's Settings change, the keys
+	among them, lasts) */
+	{
+		FILE *file;
+
+		if ((file = fopen(WEB_PERSIST_ROOT "/config.toml", "ab")) != NULL)
+			fclose(file);
+		if (symlink(WEB_PERSIST_ROOT "/config.toml", "/config.toml") != 0)
+			printf("web: cannot link /config.toml\n");
+	}
 	saves_persist = 1;
-	printf("web: the saves are kept in the browser (OPFS), but for the map cache\n");
+	printf("web: the saves and settings are kept in the browser (OPFS), but for the map cache\n");
 }
 
 int main(int argc, char **argv)
@@ -159,5 +172,11 @@ int main(int argc, char **argv)
 	(xbox_files.c) */
 	chdir(WEB_DATA_ROOT);
 	printf("web: the maps are read from the server as the game needs them\n");
-	return halo_main();
+	{
+		/* (the page is told that the game ended, its Quit: web_crash.c) */
+		int code = halo_main();
+
+		web_crash_exited(code);
+		return code;
+	}
 }

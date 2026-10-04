@@ -46,3 +46,21 @@ void halo_web_rasterizer_set_texture(short stage, short bitmap_type, short bitma
 {
 	rasterizer_set_texture(stage, bitmap_type, bitmap_index, bitmap_definition_index, bitmap_sequence_index);
 }
+
+/* object_types.c calls game_engine_vehicle_placement_begin, and
+network_game_manager.c player_delete, with no declaration in sight, so as
+returning an int; both return nothing (game_engine.c, players.c) */
+void game_engine_vehicle_placement_begin(void);
+void player_delete(long player_index);
+
+int halo_web_game_engine_vehicle_placement_begin(void)
+{
+	game_engine_vehicle_placement_begin();
+	return 0;
+}
+
+int halo_web_player_delete(long player_index)
+{
+	player_delete(player_index);
+	return 0;
+}

@@ -57,3 +57,27 @@ simple = { limit = 5, period = 60 }
 name = "JOIN_LIMIT"
 namespace_id = "1002"
 simple = { limit = 20, period = 60 }
+
+# Native games (NETWORK.md): the relay (port/web/relay, on Fly.io), and the
+# tokens for it that worker/relay.js gives the site's pages, signed with the
+# secret RELAY_TOKEN_SECRET (`npx wrangler secret put`; .dev.vars for `npm
+# run dev`), which the relay has too. An address gets at most 10 a minute
+# (a page asks once per connection to the relay).
+[vars]
+RELAY_URL = "wss://halo-web-relay.fly.dev/"
+
+[[ratelimits]]
+name = "RELAY_LIMIT"
+namespace_id = "1003"
+simple = { limit = 10, period = 60 }
+
+# Crash reports (CRASHES.md): what worker/crash.js keeps of the pages' reports,
+# for 30 days, read with `npm run crashes`. (No id: `wrangler deploy` makes
+# the namespace the first time.) An address sends at most 10 a minute.
+[[kv_namespaces]]
+binding = "CRASHES"
+
+[[ratelimits]]
+name = "CRASH_LIMIT"
+namespace_id = "1004"
+simple = { limit = 10, period = 60 }
