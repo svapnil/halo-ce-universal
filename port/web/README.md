@@ -85,7 +85,10 @@ player 1's last profile, so its name is the player's name online
 The game's map cache (`z:\cacheNNN.map`, about 770 MB) is deliberately not
 kept: it is rebuilt at each visit instead of filling the browser's storage,
 and so it cannot go stale when the server's maps change. `web_main.c` says
-how to keep it too, should that be wanted.
+how to keep it too, should that be wanted. The maps themselves the browser
+keeps for a day (`worker.js`'s `MAP_LIFETIME`, as `Cache-Control`), so a
+visit within a day of the last reads them from its disk; a map replaced in
+the bucket can be the old one in a browser for that long.
 
 The page asks the player to confirm they own the original game before the
 game loads (`App.jsx`). A Confirm is kept in the browser's `localStorage`,
