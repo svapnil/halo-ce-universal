@@ -6,8 +6,11 @@
 	--text: #9aa3ad;
 	--text-strong: #e6e9ed;
 	--bar-height: 40px;
-	/* the box: 4:3, at most 960 x 720, smaller when the window is */
-	--screen-width: min(960px, calc(100vw - 32px), calc((100vh - var(--bar-height) - 48px) * 4 / 3));
+	/* the box: 16:9, as large as the window has room for. The game draws the
+	canvas's shape at the canvas's pixels (sdl_platform.c's
+	platform_screen_mode), so this is the picture's shape and its
+	resolution too. */
+	--screen-width: min(calc(100vw - 32px), calc((100vh - var(--bar-height) - 48px) * 16 / 9));
 }
 
 html, body, #root {
@@ -39,7 +42,7 @@ body {
 
 .screen {
 	position: relative;
-	aspect-ratio: 4 / 3;
+	aspect-ratio: 16 / 9;
 	background: #000;
 }
 
@@ -50,16 +53,10 @@ body {
 	outline: none;
 }
 
-/* fullscreen: the box fills the screen; the picture stays 4:3 */
+/* fullscreen: the box fills the screen, and the picture with it, in the
+screen's shape (the game keeps to 4:3 at the narrowest, and bars the rest) */
 .screen:fullscreen {
 	aspect-ratio: auto;
-	display: grid;
-	place-items: center;
-}
-
-.screen:fullscreen .game-canvas {
-	width: min(100vw, calc(100vh * 4 / 3));
-	height: min(100vh, calc(100vw * 3 / 4));
 }
 
 .bar {

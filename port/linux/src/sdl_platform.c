@@ -499,6 +499,41 @@ window opens, what it will be. FALSE where display.resolution_scaling is
 "original": the Xbox's 640x480, scaled to the window. */
 BOOL platform_screen_mode(long *width, long *height)
 {
+#ifdef __EMSCRIPTEN__
+	/* the browser: the canvas is the display, in the page and fullscreen
+	alike. The page gives it its shape (port/web/app/src/styles.css) and SDL
+	gives its drawing buffer the pixels of that shape on the player's
+	display, so the game draws that shape with those pixels. Before the
+	window, the same from the page's layout. */
+	int buffer_width = 0, buffer_height = 0;
+
+	if (platform_window)
+	{
+		emscripten_webgl_get_drawing_buffer_size(emscripten_webgl_get_current_context(),
+			&buffer_width, &buffer_height);
+	}
+	else
+	{
+		double css_width = 0.0, css_height = 0.0;
+		double ratio = emscripten_get_device_pixel_ratio();
+
+		emscripten_get_element_css_size("#canvas", &css_width, &css_height);
+		buffer_width = (int)(css_width * ratio);
+		buffer_height = (int)(css_height * ratio);
+	}
+	if (buffer_width <= 0 || buffer_height <= 0)
+		return FALSE;
+	*width = buffer_width;
+	*height = buffer_height;
+	/* (a canvas of fewer lines than the game's 480: the game draws its 480,
+	and the display blit scales them down) */
+	if (*height < 480)
+	{
+		*width = (*width * 480 + *height / 2) / *height;
+		*height = 480;
+	}
+	return TRUE;
+#else
 	/* (the size last given, for a window that has none: minimized) */
 	static long last_width, last_height;
 	long resolution_width, resolution_height;
@@ -541,6 +576,7 @@ BOOL platform_screen_mode(long *width, long *height)
 	last_width = *width;
 	last_height = *height;
 	return TRUE;
+#endif
 }
 
 /* the size added to the list unless it has it already; the count */

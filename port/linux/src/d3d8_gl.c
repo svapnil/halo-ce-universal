@@ -61,13 +61,15 @@ The Xbox screen is 640x480. The native ports can draw a wider one: 480
 lines, and as many columns as the display's shape gives. On Android that is
 display.screen_width (port_config.c; 640 keeps 4:3); on the desktop, the
 shape of the window (of the display while the game is fullscreen, or of
-display.resolution), and 640 where display.resolution_scaling is "original".
-The game's camera derives its horizontal field of view from the viewport, so
-the 3D view simply widens. The menus and full-screen overlays are laid out
-for 640 columns; while they draw (halo_screen_ui_offset), everything shifts
-right to center them.
+display.resolution), and 640 where display.resolution_scaling is "original";
+in the browser, the shape of the page's canvas (platform_screen_mode). The
+game's camera derives its horizontal field of view from the viewport, so the
+3D view simply widens. The menus and full-screen overlays are laid out for
+640 columns; while they draw (halo_screen_ui_offset), everything shifts right
+to center them.
 
-The desktop also draws at that resolution (platform_screen_mode): render
+The desktop also draws at that resolution (platform_screen_mode; the
+browser, at the canvas's): render
 targets the size of the screen get that many pixels (screen_scale), and
 viewports, clears and visibility counts are scaled to match, so the game
 still works in its 480 lines; "original" draws 640x480, scaled up at
@@ -86,7 +88,7 @@ static long ui_offset;
 
 static void screen_mode_choose(long *width, float scale[2])
 {
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) && !defined(__EMSCRIPTEN__)
 	/* display.screen_width, or 0 for the display's shape, which the app
 	passes (port/android/host/host_main.c) */
 	const char *display = getenv("HALO_DISPLAY_WIDTH");
@@ -970,6 +972,55 @@ static GLuint framebuffer_get(GLuint color, GLuint depth)
 	return entry->framebuffer;
 }
 
+#ifdef __EMSCRIPTEN__
+/* frees the screen's targets, as the screen changes (halo_screen_commit). In
+the browser the screen is the page's canvas, which takes a new size at each
+step while the player drags the window's edge, and each size's targets would
+otherwise stay: at the display's resolution, tens of megabytes of the GPU's
+memory apiece. (The desktop has two sizes, the window's and the display's,
+and keeps both.) */
+static void render_targets_release_screen(void)
+{
+	struct render_target_entry **link = &render_targets;
+	BOOL released = FALSE;
+
+	while (*link)
+	{
+		struct render_target_entry *entry = *link;
+		struct render_target_entry **in_bucket = render_target_bucket(entry->target.data);
+		struct framebuffer_entry **framebuffer = &framebuffers;
+
+		if (entry->target.width != (unsigned long)screen_width || entry->target.height != SCREEN_HEIGHT)
+		{
+			link = &entry->next;
+			continue;
+		}
+		while (*framebuffer)
+		{
+			struct framebuffer_entry *used = *framebuffer;
+
+			if (used->color != entry->target.texture && used->depth != entry->target.texture)
+			{
+				framebuffer = &used->next;
+				continue;
+			}
+			*framebuffer = used->next;
+			glDeleteFramebuffers(1, &used->framebuffer);
+			free(used);
+		}
+		while (*in_bucket != entry)
+			in_bucket = &(*in_bucket)->next_in_bucket;
+		*in_bucket = entry->next_in_bucket;
+		*link = entry->next;
+		glDeleteTextures(1, &entry->target.texture);
+		free(entry);
+		released = TRUE;
+	}
+	if (released)
+		xgpu_gl_state_invalidate();
+}
+#endif
+
 /* the pixels per unit of the bound targets (render_target_get) */
 static float target_scale[2] = { 1.0f, 1.0f };
 
@@ -1232,12 +1283,12 @@ HRESULT WINAPI Direct3D_CreateDevice(UINT adapter, D3DDEVTYPE device_type, void 
 			device.presentation = *presentation_parameters;
 		width = device.presentation.BackBufferWidth ? device.presentation.BackBufferWidth : 640;
 		height = device.presentation.BackBufferHeight ? device.presentation.BackBufferHeight : 480;
-#ifdef HALO_ANDROID
+#if defined(HALO_ANDROID) && !defined(__EMSCRIPTEN__)
 		d3d8_surface_initialize(&device.back_buffer, D3DFMT_LIN_A8R8G8B8, width, height);
 		d3d8_surface_initialize(&device.depth_buffer, D3DFMT_LIN_D24S8, width, height);
 #else
-		/* room for the widest screen, which F11 can switch to (the screen's
-		width, above) */
+		/* room for the widest screen, which F11 can switch to, or the
+		browser's canvas take (the screen's width, above) */
 		d3d8_surface_initialize(&device.back_buffer, D3DFMT_LIN_A8R8G8B8, SCREEN_MAXIMUM_WIDTH, height);
 		d3d8_surface_initialize(&device.depth_buffer, D3DFMT_LIN_D24S8, SCREEN_MAXIMUM_WIDTH, height);
 		d3d8_surface_resize(&device.back_buffer, D3DFMT_LIN_A8R8G8B8, width, height);
@@ -1369,10 +1420,13 @@ long halo_screen_commit(void)
 	{
 		platform_log("screen: %ldx%d drawn at %.0fx%.0f", width, SCREEN_HEIGHT,
 			width * scale[0], SCREEN_HEIGHT * scale[1]);
+#ifdef __EMSCRIPTEN__
+		render_targets_release_screen();
+#endif
 		screen_width = width;
 		screen_scale[0] = scale[0];
 		screen_scale[1] = scale[1];
-#ifndef HALO_ANDROID
+#if !defined(HALO_ANDROID) || defined(__EMSCRIPTEN__)
 		if (device.created)
 		{
 			device.presentation.BackBufferWidth = (UINT)width;
@@ -3974,12 +4028,15 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 		}
 		x = (window_width - width) / 2;
 		y = (window_height - height) / 2;
+		/* (first: a framebuffer made here is bound for drawing too, and the
+		blit would then be from it to itself, which shows nothing: the first
+		frame of each size of the screen) */
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer_get(back_buffer->target.texture, 0));
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
 		glDisable(GL_SCISSOR_TEST);
 		glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer_get(back_buffer->target.texture, 0));
 		/* row 0 of the render target is the top of the picture */
 		glBlitFramebuffer(0, 0, (GLint)back_buffer->target.gl_width, (GLint)back_buffer->target.gl_height,
 			x, y + height, x + width, y, GL_COLOR_BUFFER_BIT, GL_LINEAR);

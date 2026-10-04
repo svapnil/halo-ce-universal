@@ -11,6 +11,13 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
 	useEffect(() => {
 		canvas.current.focus();
 		startGame(canvas.current, { onStatus, onNet, onLobby });
+		// SDL gives the canvas's drawing buffer the canvas's size at each of
+		// the window's resize events, and the game draws at that size
+		// (sdl_platform.c's platform_screen_mode). The canvas can change size
+		// without one: fullscreen from a window already the screen's size.
+		const observer = new ResizeObserver(() => window.dispatchEvent(new Event("resize")));
+		observer.observe(canvas.current);
+		return () => observer.disconnect();
 	}, []);
 
 	return (

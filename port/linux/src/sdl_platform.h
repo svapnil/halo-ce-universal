@@ -59,7 +59,8 @@ struct platform_keystroke
 BOOL platform_sdl_initialize(void);
 /* creates the window and makes its OpenGL context current on this thread */
 BOOL platform_video_initialize(unsigned long width, unsigned long height);
-#ifndef HALO_ANDROID
+/* (the browser build compiles the renderer as Android's: tools/web_build.py) */
+#if !defined(HALO_ANDROID) || defined(__EMSCRIPTEN__)
 BOOL platform_screen_mode(long *width, long *height);
 #endif
 /* Video Setup's resolutions (port/linux/game/menu_tags.c), in pixels: the
