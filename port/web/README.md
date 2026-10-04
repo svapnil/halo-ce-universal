@@ -129,6 +129,17 @@ changed.
     picture;
   - the picture is scaled to the canvas's drawing buffer, whose size the
     page sets, not to SDL's window size.
+  - the canvas is the display. The page gives it its shape (`styles.css`:
+    16:9 in the page, the screen's own in fullscreen) and SDL gives its
+    drawing buffer that shape's pixels on the player's display (the CSS
+    size times `devicePixelRatio`). The game draws that shape at those
+    pixels, as the desktop builds draw the display's in fullscreen
+    (`platform_screen_mode` in `sdl_platform.c`, "the screen's width" in
+    `d3d8_gl.c`): 480 lines and 640 to 1920 columns, each several pixels.
+    The targets of that size are textures, in the GPU's memory and not the
+    game's 4 GB: three of them (colour, depth, a copy), 8 MB each at
+    1920x1080 and 33 MB each at 3840x2160. As the canvas changes size the
+    old ones are freed (`render_targets_release_screen`).
   - each upload of streamed vertices or indices gets a buffer of its own
     (`web_upload_buffer` in `d3d8_gl.c`). In ANGLE, `bufferSubData` into a
     buffer that queued draws read copies the whole buffer first. With the

@@ -404,6 +404,41 @@ static void platform_fullscreen_kind_apply(void)
 pixels of the display it fills (d3d8_gl.c draws at that resolution) */
 BOOL platform_screen_mode(long *width, long *height)
 {
+#ifdef __EMSCRIPTEN__
+	/* the browser: the canvas is the display, in the page and fullscreen
+	alike. The page gives it its shape (port/web/app/src/styles.css) and SDL
+	gives its drawing buffer the pixels of that shape on the player's
+	display, so the game draws that shape with those pixels. Before the
+	window, the same from the page's layout. */
+	int buffer_width = 0, buffer_height = 0;
+
+	if (platform_window)
+	{
+		emscripten_webgl_get_drawing_buffer_size(emscripten_webgl_get_current_context(),
+			&buffer_width, &buffer_height);
+	}
+	else
+	{
+		double css_width = 0.0, css_height = 0.0;
+		double ratio = emscripten_get_device_pixel_ratio();
+
+		emscripten_get_element_css_size("#canvas", &css_width, &css_height);
+		buffer_width = (int)(css_width * ratio);
+		buffer_height = (int)(css_height * ratio);
+	}
+	if (buffer_width <= 0 || buffer_height <= 0)
+		return FALSE;
+	*width = buffer_width;
+	*height = buffer_height;
+	/* (a canvas of fewer lines than the game's 480: the game draws its 480,
+	and the display blit scales them down) */
+	if (*height < 480)
+	{
+		*width = (*width * 480 + *height / 2) / *height;
+		*height = 480;
+	}
+	return TRUE;
+#else
 	SDL_DisplayID display;
 	const SDL_DisplayMode *mode;
 
@@ -419,6 +454,7 @@ BOOL platform_screen_mode(long *width, long *height)
 	*width = (long)(mode->w * mode->pixel_density + 0.5f);
 	*height = (long)(mode->h * mode->pixel_density + 0.5f);
 	return TRUE;
+#endif
 }
 
 #endif
