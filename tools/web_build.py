@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from .linux_build import (
-    GAME_FLAGS, KCP_DIR, LINUX_ABI_FLAGS, MBEDTLS_DIR, OPTIMISATION,
+    EXPAT_DIR, EXPAT_SOURCES, GAME_FLAGS, KCP_DIR, LINUX_ABI_FLAGS, MBEDTLS_DIR, MONOCYPHER_DIR, OPTIMISATION,
     PLATFORM_FLAGS, PORT_CONFIG, PORT_DIR, POSIX_FLAGS, TOML_DIR, XDK_INCLUDE, _load_port_config,
     game_defines_and_includes, game_sources, musl_math_cflags, musl_math_sources,
     updater_defines, xdk_headers,
@@ -51,6 +51,9 @@ WEB_GAME_RENAMES: Dict[str, List[str]] = {
         "rasterizer_set_texture_bitmap_data=halo_web_rasterizer_set_texture_bitmap_data"],
     "source/rasterizer/xbox/rasterizer_xbox_plasma_energy.c": [
         "rasterizer_set_texture=halo_web_rasterizer_set_texture"],
+    "source/objects/object_types.c": [
+        "game_engine_vehicle_placement_begin=halo_web_game_engine_vehicle_placement_begin"],
+    "source/networking/network_game_manager.c": ["player_delete=halo_web_player_delete"],
 }
 
 # Network play (port/web/NETWORK.md, "The game's side"). The game and
@@ -81,8 +84,18 @@ P2P_FUNCTIONS = [
     "p2p_socket_port", "p2p_port_taken", "p2p_socket_closed", "p2p_take_clipboard_text",
     "p2p_set_game_player_counts", "p2p_discord_sanitize", "p2p_discord_identity", "p2p_hardware_id",
     "p2p_hardware_id_sanitize", "p2p_peer_endpoint_address",
+    # (the PC menus' internet games, and their server browser: p2p_lobby.c)
+    "p2p_set_hosting_allowed", "p2p_invite_link", "p2p_set_hosting_public", "p2p_set_game_listing",
+    "p2p_lobby_browse", "p2p_lobby_refresh", "p2p_lobby_games", "p2p_lobby_mark_failed",
 ]
-NATIVE_INTERNET_PLAY_UNITS = {"p2p.c", "p2p_signal.c", "p2p_crypto.c", "p2p_discord.c"}
+# the platform layer's functions the browser build has its own of, renamed
+# out of the way in their units: the clipboard, which the page's main thread
+# has (port/web/src/web_clipboard.c)
+WEB_PLATFORM_RENAMES: Dict[str, List[str]] = {
+    "sdl_platform.c": ["platform_clipboard_get=platform_sdl_clipboard_get",
+                       "platform_clipboard_set=platform_sdl_clipboard_set"],
+}
+NATIVE_INTERNET_PLAY_UNITS = {"p2p.c", "p2p_signal.c", "p2p_crypto.c", "p2p_discord.c", "p2p_lobby.c"}
 DESKTOP_INTERNET_PLAY_UNITS = {"posix_upnp.c"}
 # the browser's units with the host ABI, as posix_*.c (they implement posix.h),
 # and those with the game's (they call it, as port/linux/game's do)
@@ -196,7 +209,9 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         f"-I{platform_dir}",
         f"-I{port_include}",
         f"-I{TOML_DIR}",
+        f"-I{EXPAT_DIR}",
         f"-I{KCP_DIR}",
+        f"-I{MONOCYPHER_DIR}",
         "-Isource -Isource/cseries",
         sdk_flags,
     ])
@@ -225,7 +240,8 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         elif source.name in GLES_RENDERER_UNITS:
             add_object(source, f"{platform_cflags} -DHALO_ANDROID=1")
         else:
-            add_object(source, platform_cflags)
+            platform_renames = " ".join(f"-D{rename}" for rename in WEB_PLATFORM_RENAMES.get(source.name, []))
+            add_object(source, f"{platform_cflags} {platform_renames}")
     for source in embedded_assets:
         add_object(source, platform_cflags)
     for source in sorted((WEB_DIR / "src").glob("*.c")):
@@ -238,6 +254,12 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         else:
             add_object(source, platform_cflags)
     add_object(KCP_DIR / "ikcp.c", " ".join([abi, "-std=gnu11", "-w"]))
+    # the PC menus' XML parser (menu_files.c), and the signatures of the
+    # server browser's listings (p2p_crypto.c), as the Linux build has them
+    for name in EXPAT_SOURCES:
+        add_object(EXPAT_DIR / name, " ".join([abi, "-std=gnu11", f"-I{EXPAT_DIR}", "-w"]))
+    for name in ("monocypher.c", "monocypher-ed25519.c"):
+        add_object(MONOCYPHER_DIR / name, " ".join([abi, "-std=gnu11", "-w"]))
     for source in sorted((MBEDTLS_DIR / "library").glob("*.c")):
         add_object(source, " ".join(posix_abi + [mbedtls_include, f"-I{MBEDTLS_DIR / 'library'}",
                                                  "-fno-builtin-wcslen", "-w"]))

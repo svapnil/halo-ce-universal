@@ -71,12 +71,14 @@ variable of the same name, which `port_config.c` reads. For example
 errors and the draw counts in the console.
 
 Saves: the game's save drives (`z:`, `u:` and `t:`: player profiles,
-playlists, the checkpoint) are kept in the browser's Origin Private File
+playlists, the checkpoint) and its settings (`config.toml`, which the
+game's Settings change: the keys, the video, the audio) are kept in the browser's Origin Private File
 System (`web_main.c`), so they are still there at the next visit. The site's
 data in the browser's settings holds them; clearing it starts afresh. Where
 the browser has no such storage (some private windows), the page says so and
-the saves last for the visit only. The page's online games use player 1's
-last profile, so its name is the player's name online (`web_lobby.c`).
+the saves last for the visit only. A game joined from an invite link uses
+player 1's last profile, so its name is the player's name online
+(`web_lobby.c`).
 
 The game's map cache (`z:\cacheNNN.map`, about 770 MB) is deliberately not
 kept: it is rebuilt at each visit instead of filling the browser's storage,

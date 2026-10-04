@@ -141,8 +141,19 @@ static void mount_saves(void)
 		if (symlink(target, link) != 0)
 			printf("web: cannot link %s\n", link);
 	}
+	/* the settings too (port_config.c reads and writes config.toml in the
+	executable's folder, /: what the game's Settings change, the keys
+	among them, lasts) */
+	{
+		FILE *file;
+
+		if ((file = fopen(WEB_PERSIST_ROOT "/config.toml", "ab")) != NULL)
+			fclose(file);
+		if (symlink(WEB_PERSIST_ROOT "/config.toml", "/config.toml") != 0)
+			printf("web: cannot link /config.toml\n");
+	}
 	saves_persist = 1;
-	printf("web: the saves are kept in the browser (OPFS), but for the map cache\n");
+	printf("web: the saves and settings are kept in the browser (OPFS), but for the map cache\n");
 }
 
 int main(int argc, char **argv)

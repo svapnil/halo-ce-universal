@@ -7,7 +7,9 @@ tabs of one browser, as ?net=tabs needs.
 
 	node drive.mjs <url[|url...]> <seconds> <log file>
 
-CHROME: the browser (default: Google Chrome's place on macOS). The page's
+CHROME: the browser (default: Google Chrome's place on macOS); CDP_PORT: its
+debugging port (9333: another for two runs at once); SCREENSHOT:
+a PNG file to save the first page as, at the end. The page's
 ownership notice is confirmed first, in the profile (a new one each run).
 */
 import { spawn } from "node:child_process";
@@ -17,7 +19,7 @@ import { join } from "node:path";
 
 const [urlList, seconds = "240", logFile = "page.log"] = process.argv.slice(2);
 const urls = urlList.split("|");
-const port = 9333;
+const port = Number(process.env.CDP_PORT || 9333);
 const profile = mkdtempSync(join(tmpdir(), "halo-drive-"));
 writeFileSync(logFile, "");
 const log = (line) => appendFileSync(logFile, `[${new Date().toISOString().slice(11, 23)}] ${line}\n`);
@@ -102,11 +104,18 @@ await sleep(1500);
 await send("Runtime.evaluate", { expression: `localStorage.setItem("halo-ownership-notice-v1", "confirmed")` }, first);
 for (const [index, url] of urls.entries()) {
 	const session = index === 0 ? first : await openTab();
+	/* (from another page: an address that differs in its fragment alone
+	would not load) */
+	await send("Page.navigate", { url: "about:blank" }, session);
 	await send("Page.navigate", { url }, session);
 	log(`opened page ${index + 1}: ${url}`);
 	await sleep(3000);
 }
 await sleep(Number(seconds) * 1000);
+if (process.env.SCREENSHOT) {
+	const shot = await send("Page.captureScreenshot", { format: "png" }, first);
+	writeFileSync(process.env.SCREENSHOT, Buffer.from(shot.data, "base64"));
+}
 log("done");
 chrome.kill();
 process.exit(0);

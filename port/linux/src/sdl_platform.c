@@ -524,11 +524,35 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	return TRUE;
 }
 
+#ifdef __EMSCRIPTEN__
+/* the browser build: the page's fullscreen, which takes the page's panels
+along (port/web/app/src/App.jsx: as its button does), not the canvas's
+alone. on: 1, 0, or -1 to switch. The page acts on it on the browser's
+thread, within the key's or the click's gesture, which the browser wants */
+static void web_page_fullscreen(int on)
+{
+	MAIN_THREAD_ASYNC_EM_ASM({
+		window.dispatchEvent(new CustomEvent("halo-fullscreen", { detail: $0 }));
+	}, on);
+}
+#endif
+
 /* display.fullscreen, display.window_scale (when it changes: the window can
 be resized) and display.vsync, as Settings has written them */
 void platform_display_apply(void)
 {
-#ifndef HALO_ANDROID
+#if defined(__EMSCRIPTEN__)
+	/* (the browser: Settings' fullscreen asks the page's, when it changes;
+	the page sizes the canvas) */
+	static int applied = -1;
+	int fullscreen = platform_fullscreen_setting() != FALSE;
+
+	if (!platform_window)
+		return;
+	if (applied >= 0 && fullscreen != applied)
+		web_page_fullscreen(fullscreen);
+	applied = fullscreen;
+#elif !defined(HALO_ANDROID)
 	BOOL fullscreen = platform_fullscreen_setting();
 	long scale = config_integer("display.window_scale");
 
@@ -1068,8 +1092,13 @@ void platform_pump_events(void)
 			window's size and place while fullscreen) */
 			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F11)
 			{
+#ifdef __EMSCRIPTEN__
+				/* (the page's, as its fullscreen button) */
+				web_page_fullscreen(-1);
+#else
 				SDL_SetWindowFullscreen(platform_window,
 					(SDL_GetWindowFlags(platform_window) & SDL_WINDOW_FULLSCREEN) ? false : true);
+#endif
 			}
 #endif
 			break;

@@ -198,40 +198,6 @@ body {
 	margin: 0;
 }
 
-.fields {
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 10px;
-}
-
-.field {
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	min-width: 0;
-}
-
-.field select,
-.join-row input {
-	height: 32px;
-	padding: 0 8px;
-	border: 1px solid var(--edge);
-	border-radius: 4px;
-	background: var(--page);
-	color: var(--text-strong);
-	font: inherit;
-	min-width: 0;
-}
-
-.join-row {
-	display: flex;
-	gap: 8px;
-}
-
-.join-row input {
-	flex: 1;
-}
-
 .primary-button,
 .secondary-button {
 	height: 32px;
@@ -335,49 +301,6 @@ body {
 .toast-close:hover {
 	background: var(--edge);
 	color: var(--text-strong);
-}
-
-@media (max-width: 520px) {
-	.fields {
-		grid-template-columns: 1fr;
-	}
-}
-
-/* Start now / Wait for friends */
-.choice {
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 4px;
-	padding: 3px;
-	border: 1px solid var(--edge);
-	border-radius: 6px;
-	background: var(--page);
-}
-
-.choice-option {
-	display: grid;
-	place-items: center;
-	height: 28px;
-	border-radius: 4px;
-	color: var(--text);
-	font-weight: 600;
-	cursor: pointer;
-}
-
-.choice-option input {
-	position: absolute;
-	opacity: 0;
-	pointer-events: none;
-}
-
-.choice-option.selected {
-	background: var(--edge);
-	color: var(--text-strong);
-}
-
-.choice-option:has(input:focus-visible) {
-	outline: 2px solid var(--text-strong);
-	outline-offset: 1px;
 }
 
 /* the ownership notice */
