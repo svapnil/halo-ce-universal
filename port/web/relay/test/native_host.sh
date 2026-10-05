@@ -21,7 +21,7 @@ if [ "$1" = stop ]; then
 	docker network rm halonet >/dev/null 2>&1 || true
 	exit 0
 fi
-tag=${1:-build-74}
+tag=${1:-build-125}
 map=${2:-bloodgulch}
 
 mkdir -p "$work/release" "$work/saves"
@@ -40,14 +40,15 @@ docker build -q -t halo-web-relay --target relay ../.. >/dev/null
 docker network create halonet >/dev/null 2>&1 || true
 docker rm -f halo-native-host halo-relay >/dev/null 2>&1 || true
 
-# (Docker Desktop's file sharing drops the executable bit: run a copy)
+# (Docker Desktop's file sharing drops the executable bit: run a copy, with
+# the release's brokers.txt beside it, where the game reads its brokers)
 docker run -d --name halo-native-host --network halonet --platform linux/amd64 \
 	-v "$work/release/$tag":/halo:ro -v "$root/assets":/data:ro -v "$work/saves":/saves -w /data \
 	-e XDG_DATA_HOME=/saves -e SDL_VIDEO_DRIVER=offscreen -e SDL_AUDIO_DRIVER=dummy \
 	-e HALO_NULL_RENDERER=1 -e HALO_HIDDEN_WINDOW=1 \
 	-e HALO_NETWORK_TEST="host:$map" -e HALO_NETWORK_TEST_START=20 \
 	-e HALO_TEST_INPUT=bot:1 -e HALO_NETWORK_TEST_SHOOT=5 -e HALO_NETWORK_TEST_KILL=20 \
-	halo-native-host sh -c 'cp /halo/halo /tmp/halo && chmod +x /tmp/halo && exec /tmp/halo' >/dev/null
+	halo-native-host sh -c 'cp /halo/halo /tmp/halo && chmod +x /tmp/halo && { cp /halo/brokers.txt /tmp/ 2>/dev/null || true; } && exec /tmp/halo' >/dev/null
 docker run -d --name halo-relay --network halonet -p 8790:8790 -e RELAY_INSECURE=1 -e RELAY_REPORT=1 \
 	halo-web-relay >/dev/null
 
