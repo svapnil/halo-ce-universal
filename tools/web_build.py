@@ -272,12 +272,18 @@ def generate_web_build(n: Writer, sln: Any) -> None:
 
     # (the threads' part of crash reports: port/web/src/web_pre.js)
     pre_js = WEB_DIR / "src" / "web_pre.js"
-    ldflags = WEB_LINK_FLAGS + [f"--pre-js {pre_js}"] + ([] if release else ["-sASSERTIONS=1"])
+    # internet play's MQTT brokers (network.brokers_file), a file beside
+    # config.toml as on the desktop: here in the game's own files, at /. The
+    # relay reaches only the brokers it knows: RELAY_BROKERS
+    # (port/web/relay/main.go) names these too.
+    brokers = Path("port/assets/network/brokers.txt")
+    ldflags = (WEB_LINK_FLAGS + [f"--pre-js {pre_js}", f"--embed-file {brokers}@/brokers.txt"] +
+               ([] if release else ["-sASSERTIONS=1"]))
     n.build(
         outputs=output,
         rule="web_link",
         inputs=objects,
-        implicit=[pre_js],
+        implicit=[pre_js, brokers],
         implicit_outputs=[build_dir / "halo.wasm"],
         variables={"ldflags": " ".join(ldflags)},
     )

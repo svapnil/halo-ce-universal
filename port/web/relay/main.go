@@ -53,7 +53,8 @@ Settings (the environment):
 	                      dedicated IPv4: STUN sees the machine's egress
 	                      address, which takes nothing in)
 	RELAY_BROKERS         the MQTT brokers, host:port, comma-separated (the
-	                      desktop's network.signalling_brokers)
+	                      game's port/assets/network/brokers.txt, which the
+	                      browser build carries: tools/web_build.py)
 	RELAY_STUN            the STUN servers, host:port (network.stun_servers)
 	RELAY_INSECURE=1      for tests on one machine: no tokens, and private
 	                      addresses (a Docker network's) allowed
@@ -110,8 +111,9 @@ var (
 	publicIP     = addressNumber(net.ParseIP(setting("RELAY_PUBLIC_IP", "")))
 	report       = setting("RELAY_REPORT", "") == "1"
 	signalling   = setting("RELAY_SIGNALLING", "")
-	// (as port/linux/src/port_config.c's defaults)
-	brokers     = endpoints(setting("RELAY_BROKERS", "broker.emqx.io:1883,broker.hivemq.com:1883,test.mosquitto.org:1883"))
+	// (as port/assets/network/brokers.txt, and port/linux/src/port_config.c's
+	// default for network.stun_servers)
+	brokers     = endpoints(setting("RELAY_BROKERS", "opence.milenko.org:1883,broker.emqx.io:1883,broker.hivemq.com:1883,test.mosquitto.org:1883"))
 	stunServers = endpoints(setting("RELAY_STUN", "stun.l.google.com:19302,stun.cloudflare.com:3478"))
 )
 

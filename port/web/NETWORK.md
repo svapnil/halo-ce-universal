@@ -376,6 +376,14 @@ them. What a browser lacks, real sockets, a relay lends it:
 - **The server browser.** The PC menus' Join Game > Server Browser lists
   desktop builds' public games (`p2p_lobby.c`, through the MQTT brokers),
   and joins one by its invite, as Direct Link does.
+- **The brokers** are the desktop's: `port/assets/network/brokers.txt`,
+  which the desktop builds read beside `config.toml`
+  (`network.brokers_file`) and the browser build carries in its own files,
+  at `/brokers.txt` (`tools/web_build.py`). The relay reaches only the
+  brokers it knows, so a broker upstream adds to that file must be added to
+  `RELAY_BROKERS` too (`relay/main.go`), and the relay deployed: until
+  then the page gets no address for the new one, and uses the rest (any
+  one is enough).
 - **Sockets.** `p2p.c` keeps its stand-ins on this machine, as `web_p2p.c`
   does, and only its tunnel's socket and its brokers' connections go to the
   internet. `web_net.c` sends a socket's datagrams and connections there
