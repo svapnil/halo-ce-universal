@@ -59,6 +59,9 @@ Settings (the environment):
 	                      addresses (a Docker network's) allowed
 	RELAY_ALLOW_PRIVATE=1 private addresses allowed, tokens still needed (tests)
 	RELAY_REPORT=1        logs each session's numbers every 5 seconds
+	RELAY_SIGNALLING      where the browsers' signalling is, host:port
+	                      (port/web/signalling, on this machine): /net/rooms/
+	                      goes there, so that the two share an address
 */
 package main
 
@@ -74,6 +77,8 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"regexp"
 	"sort"
@@ -104,6 +109,7 @@ var (
 	udpPorts     = setting("RELAY_UDP_PORTS", "")
 	publicIP     = addressNumber(net.ParseIP(setting("RELAY_PUBLIC_IP", "")))
 	report       = setting("RELAY_REPORT", "") == "1"
+	signalling   = setting("RELAY_SIGNALLING", "")
 	// (as port/linux/src/port_config.c's defaults)
 	brokers     = endpoints(setting("RELAY_BROKERS", "broker.emqx.io:1883,broker.hivemq.com:1883,test.mosquitto.org:1883"))
 	stunServers = endpoints(setting("RELAY_STUN", "stun.l.google.com:19302,stun.cloudflare.com:3478"))
@@ -1109,6 +1115,11 @@ func main() {
 		fmt.Fprintf(response, "ok %d\n", count)
 	})
 	mux.HandleFunc("GET /{$}", serveRelay)
+	if signalling != "" {
+		// the rooms' WebSockets, as they are: a few messages for each join,
+		// and none of a game's traffic
+		mux.Handle("/net/rooms/", httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: signalling}))
+	}
 
 	note := ""
 	if insecure {

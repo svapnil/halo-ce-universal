@@ -16,7 +16,8 @@ maps in `assets/maps` (`tools/extract_maps.py`).
    - `halo-native-host`: the release (by default `build-74`), hosting Blood
      Gulch with a bot that shoots and is killed every 20 seconds
      (`debug.network_test`, `port/linux/NETCODE.md`);
-   - `halo-relay`: the relay (built from `port/web/relay`, as for Fly.io),
+   - `halo-relay`: the relay (built as for Fly.io: `port/web/Dockerfile`,
+     its `relay` target),
      with `RELAY_INSECURE=1` (no tokens, so that `npm run dev` needs no
      secret; and private addresses allowed: the host's is one) and
      `RELAY_REPORT=1`, on port 8790. Its other limits apply as in

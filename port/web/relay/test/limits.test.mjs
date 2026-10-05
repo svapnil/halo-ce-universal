@@ -17,7 +17,7 @@ import { join } from "node:path";
 import dgram from "node:dgram";
 import { after, afterEach, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { WebSocket } from "ws";
+import { WebSocket, WebSocketServer } from "ws";
 import { makeRelayToken } from "../../worker/relay.js";
 
 const PORT = 8799;
@@ -25,6 +25,8 @@ const UDP_PORT = 41000;
 /* a STUN server of the test's, and the address the relay says it is at */
 const STUN_PORT = 34780;
 const PUBLIC_IP = "203.0.113.7";
+/* where the relay is told the signalling is (RELAY_SIGNALLING) */
+const SIGNALLING_PORT = 8798;
 const SECRET = "a secret for the tests";
 const ORIGIN = "http://localhost:8765";
 const OUT = { datagram: 1, connected: 2, refused: 3, data: 4, closed: 5, resolved: 6 };
@@ -40,6 +42,7 @@ before(async () => {
 			...process.env, PORT: String(PORT), RELAY_TOKEN_SECRET: SECRET, RELAY_ORIGINS: ORIGIN,
 			RELAY_ALLOW_PRIVATE: "1", RELAY_UDP_PORTS: `${UDP_PORT}-${UDP_PORT + 1}`,
 			RELAY_STUN: `stun.l.google.com:19302,localhost:${STUN_PORT}`, RELAY_PUBLIC_IP: PUBLIC_IP,
+			RELAY_SIGNALLING: `127.0.0.1:${SIGNALLING_PORT}`,
 		},
 	});
 	relay.stdout.on("data", (data) => { output += data; });
@@ -291,4 +294,29 @@ test("STUN's answers tell the page the relay's public address", async () => {
 	const address = (answer.readUInt32BE(28) ^ 0x2112a442) >>> 0;
 	assert.equal(address, 0xcb007107);
 	assert.ok(port === UDP_PORT || port === UDP_PORT + 1, `port ${port}`);
+});
+
+test("the rooms' WebSockets go to the signalling, as they are", async () => {
+	/* a signalling that says what it was asked, and echoes */
+	const signalling = new WebSocketServer({ port: SIGNALLING_PORT, host: "127.0.0.1" });
+	opened.push(signalling);
+	signalling.on("connection", (socket, request) => {
+		socket.send(JSON.stringify({ path: request.url, origin: request.headers.origin, from: request.headers["fly-client-ip"] }));
+		socket.on("message", (data, isBinary) => socket.send(data, { binary: isBinary }));
+	});
+	await new Promise((resolve) => signalling.on("listening", resolve));
+
+	/* (no token: the relay's are for its own sessions) */
+	const socket = new WebSocket(`ws://127.0.0.1:${PORT}/net/rooms/new`, { origin: ORIGIN, headers: { "Fly-Client-IP": "198.51.100.9" } });
+	opened.push(socket);
+	const messages = [];
+	socket.on("message", (data) => messages.push(data.toString()));
+	await new Promise((resolve, reject) => socket.on("open", resolve).on("error", reject));
+	socket.send("ping");
+	assert.ok(await until(() => messages.length === 2));
+	assert.deepEqual(JSON.parse(messages[0]), { path: "/net/rooms/new", origin: ORIGIN, from: "198.51.100.9" });
+	assert.equal(messages[1], "ping");
+
+	/* and nothing else does */
+	assert.equal((await fetch(`http://127.0.0.1:${PORT}/net/relay`)).status, 404);
 });

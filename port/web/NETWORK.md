@@ -4,14 +4,15 @@ The plan for system link games between browsers. A browser cannot use the
 desktop's internet play (`port/linux/src/p2p.c`): it has no UDP or TCP
 sockets, so no MQTT brokers, STUN or hole punching. Browsers reach each other
 through WebRTC data channels, relayed by Cloudflare Realtime SFU, and find
-each other through the site's Worker.
+each other through the signalling: a server of our own, or the site's Worker.
 
 Status:
 
 - Done: the in-memory sockets (`src/web_net.c`), internet play over links
   (`src/web_p2p.c`), the bridge to the page (`app/src/net_bridge.js`), the
-  signalling server (`worker/rooms.js`, `app/src/halo_net.js`), and two
-  transports: through the SFU (`app/src/sfu_transport.js`, the default),
+  signalling (`app/src/halo_net.js`, and its two servers: `signalling/`,
+  Elixir, and the Worker's `worker/rooms.js`; refer to "The signalling's
+  server"), and two transports: through the SFU (`app/src/sfu_transport.js`, the default),
   and between the pages of one browser (`app/src/tab_transport.js`,
   `?net=tabs`), and the lobby (`src/web_lobby.c`, `app/src/lobby.js`):
   the game's own menus (the PC version's, as upstream's) host and join, and
@@ -22,15 +23,18 @@ Status:
   Fly.io, by its invite or from the PC menus' server browser (refer to
   "Native games"). A page hosts for browsers only.
 - To do: browsers' rooms in the server browser (rooms that list themselves).
+- To do: remove the Worker's rooms, once the pages have moved to the
+  signalling's server and it has run a while (refer to "Removing the
+  Worker's rooms").
 
 ## Parts
 
 ```
- joiner's page                     Worker                       host's page
+ joiner's page                   signalling                     host's page
  ┌──────────────┐  WebSocket   ┌──────────────────┐  WebSocket  ┌──────────────┐
- │ halo_net.js  │──signalling──│ GameRoom (one    │─signalling──│ halo_net.js  │
- │              │   (JSON)     │ Durable Object   │   (JSON)    │              │
- │              │              │ per game)        │             │              │
+ │ halo_net.js  │──signalling──│ a room for each  │─signalling──│ halo_net.js  │
+ │              │   (JSON)     │ game             │   (JSON)    │              │
+ │              │              │                  │             │              │
  │              │              └────────┬─────────┘             │              │
  │              │                       │ HTTPS, app token      │              │
  │              │              ┌────────┴─────────┐             │              │
@@ -43,15 +47,18 @@ Status:
   traffic never goes through it: a game goes on if the WebSocket drops.
 - **The SFU** carries the game's traffic. Each page has one
   `RTCPeerConnection`, to the SFU, however many peers it has. The SFU's app
-  token stays in the Worker (`REALTIME_APP_ID`, `REALTIME_APP_TOKEN`).
+  token stays in the signalling's server (`REALTIME_APP_ID`,
+  `REALTIME_APP_TOKEN`).
 - **Star.** As on the desktop, joiners reach only the host, and the host
   makes the game's decisions. A link is a joiner and the host.
 
 ## Rooms and invites
 
-A room is one hosted game, at `wss://<site>/net/rooms/<room>`:
+A room is one hosted game, at `wss://<signalling>/net/rooms/<room>`
+(`<signalling>`: what the site's Worker answers at `GET /net/signalling`,
+or the site itself; "The signalling's server"):
 
-- `room`: 8 characters of Crockford's base 32, made by the Worker. It names
+- `room`: 8 characters of Crockford's base 32, made by the server. It names
   the game and is not secret, so that a server browser can list it later.
 - `secret`: 16 random bytes, base64url. Only the invite carries it. A join
   without it is refused.
@@ -64,7 +71,8 @@ working (they are the SFU's), but no one else can join.
 Limits: 15 joiners (16 machines); an address makes at most 5 rooms and 20
 joins a minute (each is SFU sessions on the account's bill). A joiner that has not answered the SFU's
 offer 30 seconds after joining is closed. A WebSocket from a page of another
-site is refused.
+site is refused. (The server of `signalling/` has two more, for its
+machine's sake: "The signalling's server".)
 
 ## Signalling messages
 
@@ -75,7 +83,7 @@ machine derives the peer's virtual address in 100.64.0.0/10 as on the
 desktop. `netVersion` is `HALO_PORT_NETWORK_VERSION`.
 
 The page sends the text `ping` every 30 seconds; the server answers `pong`
-without waking the room.
+without a word to the room.
 
 ### Page to server
 
@@ -97,7 +105,7 @@ without waking the room.
 | `error` | `code`, `message` | Refused or failed; the server then closes the WebSocket. |
 
 `error` codes: `busy` (this address made too many rooms or joins in the
-last minute: 5 and 20, `wrangler.toml`), `protocol` (a message out of order or malformed), `version`
+last minute: 5 and 20; or has too many pages at once), `protocol` (a message out of order or malformed), `version`
 (another `version` than the server's, or another `netVersion` than the
 host's), `not-found` (no such room), `secret`, `full`, `duplicate` (the `id`
 is already in the room), `not-ready` (the host has not connected to the SFU
@@ -400,8 +408,8 @@ them. What a browser lacks, real sockets, a relay lends it:
 - **Invites.** A page opened at `#native=<invite>` joins that game
   (`HALO_NET_NATIVE_INVITE`, as the game's internet play starts; then "The
   lobby"); Direct Link's PASTE LINK takes one too.
-- **Where it runs.** On Fly.io (`relay/fly.toml`: the app `halo-web-relay`,
-  in iad), not on Workers, which have no UDP. What Fly does with UDP, as
+- **Where it runs.** On Fly.io (`fly.toml`: the app `halo-web-relay`,
+  in iad; "The machine"), not on Workers, which have no UDP. What Fly does with UDP, as
   found in deploying it:
   - it takes UDP in only on a dedicated IPv4 (109.105.217.218), for sockets
     bound to `fly-global-services`, and does not translate ports;
@@ -473,13 +481,132 @@ Locally, with `npm run dev` (no secret: `RELAY_INSECURE=1` for the relay;
 and joins it from a headless Chrome. By hand, open a desktop build's invite in
 a page: `http://localhost:8765/#native=halo://join/...`.
 
-Deployed: the relay as `relay/fly.toml` says, the same secret in the Worker
+Deployed: the relay as `fly.toml` says, the same secret in the Worker
 (`npx wrangler secret put RELAY_TOKEN_SECRET`), and `RELAY_URL` in
 `wrangler.toml`.
 
-## Moving to Phoenix
+## The signalling's server
 
-`worker/rooms.js` can be replaced by a Phoenix server that speaks these
-same messages; the pages change only the signalling address
-(`signalling` in `app/src/halo_net.js`). Refer to the note at the start of
-`worker/rooms.js`.
+`signalling/` (Elixir: Bandit, a plain WebSocket) is the rooms as a server
+of our own, on the relay's machine. It speaks "Signalling messages" as
+`worker/rooms.js` does, so the pages change only the address
+(`signallingAddress` in `app/src/halo_net.js`): what the Worker answers at
+`GET /net/signalling`, which is `wrangler.toml`'s `SIGNALLING_URL`. Without
+one the pages use the Worker's own rooms (a `GameRoom` Durable Object for
+each), which stay until this server has run a while. `?signalling=<URL>`
+gives a page another.
+
+What it is for: what a server that is always there can do and a Durable
+Object cannot, a lobby that rooms update and pages watch (browsers' rooms in
+the server browser), and hosts that come back to their rooms. Neither is
+made yet.
+
+- **A process for each.** A room is a process (`Signalling.Room`), found by
+  its code; a page's WebSocket is another (`Signalling.Page`), which makes
+  its own SFU calls, so a slow SFU holds up that page only. The room
+  watches its pages: a joiner's end is the host's `unlink`, the host's end
+  is the room's.
+- **In memory.** Rooms are kept nowhere else: when the server starts again
+  they are gone, and their hosts host again ("The machine").
+- **Limits.** As the Worker's (5 rooms and 20 joins a minute for an
+  address, by `Fly-Client-IP`), and two for the machine, whose memory is
+  the relay's too: an address has at most 32 pages at once
+  (`SIGNALLING_PAGES_AT_ONCE`), and the server 800. A page that has not
+  answered the SFU's offer, or said who it is, in 30 seconds is closed, and
+  one that has sent nothing for 90.
+- **When the host leaves**, its joiners' channels are left open, as "Rooms
+  and invites" says: a host whose WebSocket dropped plays on. The Worker's
+  rooms close them (as for a joiner that leaves), which ends those links.
+- **Settings** (the environment): `SIGNALLING_PORT` (8791) and
+  `SIGNALLING_HOST` (127.0.0.1: the relay passes `/net/rooms/` on),
+  `SIGNALLING_ORIGINS` (the pages' origins allowed; any, if empty),
+  `REALTIME_APP_ID` and `REALTIME_APP_TOKEN`, and for tests `SFU_API` and
+  `SIGNALLING_ANSWER_TIMEOUT` (milliseconds).
+
+Locally: `mix run --no-halt` in `signalling/` (with the SFU app's two
+values in the environment), and `SIGNALLING_URL=http://localhost:8791` in
+`.dev.vars` for `npm run dev`.
+
+`signalling/test/rooms.test.mjs` talks to it as pages do, with an SFU of
+its own, and runs against the Worker's rooms too (`SERVER=worker`), so that
+the two stay the same to a page, and against Fly.io's image
+(`SERVER=machine`).
+
+### The machine
+
+One Fly.io machine (`fly.toml`, `Dockerfile`: `fly deploy` in `port/web`)
+runs both servers, started by `fly_start.sh`: the relay, and the signalling
+beside it. Only the relay's port is open: it passes `/net/rooms/` to the
+signalling (`RELAY_SIGNALLING`), so the two share an address,
+`halo-web-relay.fly.dev`.
+
+- **A deploy ends the games in progress**, whichever server it is for: the
+  machine starts again, and the relay with it, whose sockets native games'
+  pages play through; they are dropped from their games. Games between
+  browsers go on (their traffic is the SFU's), but their rooms end: no one
+  else joins until their hosts host again. So deploy when few play
+  (`fly logs` has each relay session; `/healthz` counts them).
+- **The CPU is the relay's first.** The relay carries games' packets, and
+  the machine has one shared CPU. The signalling runs at the lowest
+  priority (`nice -n 19`), with one scheduler that sleeps as soon as it has
+  nothing to do (`signalling/rel/vm.args.eex`: Erlang's spin for a while
+  first, by default). Its work is small besides: a few messages and SFU
+  calls for each join, and TLS ends at Fly's edge. If it ends, it is
+  started again and the relay's games go on; if the relay ends, the machine
+  does.
+- **Memory.** About 140 MB for the signalling, idle, and 10 MB for the
+  relay, of the machine's 512 MB.
+
+Measured (2026-10-05), the image on one CPU of a laptop's Docker, with a
+page of the relay's answering its pings: idle, the image took 0.03% of the
+CPU; with about 120 rooms and 350 joins a second through the signalling
+(far more than there will be, and all of the CPU), the relay's round trip
+to its page stayed under 4 ms. At the usual priority it was much the same
+(one of 14 ms), so the priority is for what was not tried. (One run's first
+round trip, before any load, was 87 ms: not explained.) Not measured on
+Fly.io, where a shared CPU that is used steadily is throttled, the relay
+with it: watch the machine's CPU after the pages move here.
+
+### Moving the pages to it
+
+1. In `port/web`: `fly secrets set REALTIME_APP_ID=... REALTIME_APP_TOKEN=...`
+   (the Worker's), then `fly deploy` (it ends native games in progress).
+2. Check it from the live site, before any page is told of it:
+   `node signalling/test/probe.mjs https://openhaloce.com https://halo-web-relay.fly.dev`
+   hosts and joins a room there from two tabs of a headless Chrome at the
+   site, and sends bytes both ways through the SFU. (The site's pages take
+   `?signalling=` only once the next step has deployed them.)
+3. Uncomment `SIGNALLING_URL` in `wrangler.toml`, and `npm run deploy`;
+   then the same check without its second address, which goes where the
+   pages now go. Rooms made before then are the Worker's: a page loaded
+   after cannot join them (`not-found`) until their hosts host again.
+
+Moved (2026-10-05): the probe passed from openhaloce.com and
+www.openhaloce.com, and a game on the live site between two windows of a
+headless Chrome (`debug.network_test`: one hosting, one joining its invite)
+went through `halo-web-relay.fly.dev`, both pages at the same scores, kills
+and deaths after a minute and a half. On the machine the signalling took
+125 MB, idle, at priority 19, and was up 2 seconds after the relay (until
+then the relay answers `/net/rooms/` 502: a page that hosts or joins just
+as the machine starts tries again). The site's workers.dev address is not
+among `SIGNALLING_ORIGINS` (nor `RELAY_ORIGINS`): its pages get no rooms.
+
+### Removing the Worker's rooms
+
+To do, once the pages have moved and the server has run a while (until
+then they are the way back: comment `SIGNALLING_URL` out again, and
+`npm run deploy`). What goes:
+
+- `worker/rooms.js`'s `GameRoom` and `handleRooms`, and their route in
+  `worker/worker.js` (`/net/signalling` stays: it is how the pages find
+  the server);
+- in `wrangler.toml`: the `ROOMS` Durable Object binding, with a
+  `deleted_classes = ["GameRoom"]` migration, and the `HOST_LIMIT` and
+  `JOIN_LIMIT` rate limits;
+- the Worker's secrets `REALTIME_APP_ID` and `REALTIME_APP_TOKEN`
+  (`npx wrangler secret delete`), and their lines in `.dev.vars`, where
+  `SIGNALLING_URL` then says where `npm run dev`'s pages find a server;
+- the pages' way back to the site's own rooms (`signallingAddress` in
+  `app/src/halo_net.js`), and `SERVER=worker` in
+  `signalling/test/rooms.test.mjs`;
+- what this file says of the two servers, which is then of one.

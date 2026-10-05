@@ -2,7 +2,8 @@
 HALO_NET.JS
 
 The page's side of network play between browsers (NETWORK.md): hosts or
-joins a room through the Worker's signalling (worker/rooms.js), and gives
+joins a room through the signalling (the server of port/web/signalling, or
+the Worker's own rooms, worker/rooms.js: the same messages), and gives
 the links to the other machines, each two data channels through Cloudflare
 Realtime SFU. It runs on the page's main thread, where RTCPeerConnection
 is; the game's worker reaches it through a bridge (NETWORK.md, "The game's
@@ -46,18 +47,34 @@ export function parseInvite(text) {
 	return match ? { room: match[1].toUpperCase(), secret: match[2] } : null;
 }
 
+/* where the signalling is: ?signalling=<URL>, or what the site's Worker says
+(GET /net/signalling: the server of port/web/signalling), or the Worker
+itself (its own rooms, worker/rooms.js) */
+async function signallingAddress() {
+	const given = new URLSearchParams(location.search).get("signalling");
+	if (given) {
+		return given;
+	}
+	try {
+		const answer = await (await fetch("/net/signalling")).json();
+		return answer.signalling || location.origin;
+	} catch {
+		return location.origin;
+	}
+}
+
 /* hosts a game: resolves once the room takes joiners */
-export function hostGame(options) {
-	return connect({ ...options, room: null, secret: null });
+export async function hostGame(options) {
+	return connect({ signalling: await signallingAddress(), ...options, room: null, secret: null });
 }
 
 /* joins the game of an invite: resolves once the link to the host is open */
-export function joinGame(invite, options) {
+export async function joinGame(invite, options) {
 	const parsed = parseInvite(invite);
 	if (!parsed) {
-		return Promise.reject(new NetError("invite", "Not an invite"));
+		throw new NetError("invite", "Not an invite");
 	}
-	return connect({ ...options, ...parsed });
+	return connect({ signalling: await signallingAddress(), ...options, ...parsed });
 }
 
 function connect({
@@ -65,10 +82,7 @@ function connect({
 	netVersion,
 	room,
 	secret,
-	/* where the signalling is: this site's Worker. A Phoenix server that
-	speaks the same messages (see the note at the start of worker/rooms.js)
-	is only another address here */
-	signalling = location.origin,
+	signalling,
 	onLink = () => {},
 	onUnlink = () => {},
 	onClose = () => {},

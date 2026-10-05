@@ -11,22 +11,22 @@ The room keeps what it must across hibernation (the Durable Object sleeps
 while no message comes, which is most of a game) in storage (`room`) and in
 each WebSocket's attachment (its page), not in memory.
 
-Moving to Phoenix (Elixir): this file is the whole server side of the
-protocol, so a Phoenix server can take its place without the pages
-changing, if it speaks the same JSON over a plain WebSocket
-(Phoenix.Socket.Transport / WebSock, not Phoenix Channels' own framing,
-which phoenix.js would need). A GameRoom is then a GenServer for each room
-under a DynamicSupervisor, found through a Registry by its code; `room`
-becomes its state, and the attachments the state of each page's socket
-process, monitored by the room so that a page's exit is its `unlink`. The
-SFU calls (sfuRequest) become Req calls with the same JSON. What a Durable
-Object does not give, and Phoenix would:
-- a live server browser: Phoenix.PubSub and Phoenix.Presence on a "lobby"
-  topic, which each room updates with its game (hosts would send it the
-  map, the game type and the players). Here that would be one more Durable
-  Object, a directory, that rooms report to (see `welcome` in host());
-- rooms across several machines, and a host that reconnects to its room
-  (a room here ends when its host's WebSocket closes).
+TODO: remove these rooms (this file's GameRoom and handleRooms, and what
+wrangler.toml has for them) once the pages have moved to the signalling's
+server and it has run a while: NETWORK.md, "Removing the Worker's rooms".
+
+The same rooms as a server of our own: port/web/signalling (Elixir), on the
+relay's machine, which speaks these messages too (its test,
+signalling/test/rooms.test.mjs, runs against either). The pages use it
+when wrangler.toml's SIGNALLING_URL says where it is (handleSignalling,
+below), and these rooms when it does not. What it is for, and a Durable
+Object does not give:
+- a live server browser: a "lobby" that each room updates with its game
+  (hosts would send it the map, the game type and the players), which
+  pages watch. Here that would be one more Durable Object, a directory,
+  that rooms report to (see `welcome` in host());
+- a host that reconnects to its room (a room here ends when its host's
+  WebSocket closes).
 */
 
 import { DurableObject } from "cloudflare:workers";
@@ -403,7 +403,8 @@ export class GameRoom extends DurableObject {
 		}
 		let response;
 		try {
-			response = await fetch(`${SFU_API}/apps/${encodeURIComponent(appId)}${path}`, {
+			/* (SFU_API: the SFU of signalling/test/rooms.test.mjs) */
+			response = await fetch(`${this.env.SFU_API || SFU_API}/apps/${encodeURIComponent(appId)}${path}`, {
 				method,
 				headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
 				body: body === undefined ? undefined : JSON.stringify(body),
@@ -448,6 +449,15 @@ function refuse(code, message) {
 	pair[1].send(JSON.stringify({ type: "error", code, message }));
 	pair[1].close(1008, code);
 	return new Response(null, { status: 101, webSocket: pair[0] });
+}
+
+/* GET /net/signalling: where the pages' signalling is (halo_net.js):
+{ "signalling": "https://..." } for the server of port/web/signalling
+(SIGNALLING_URL), or null for the rooms here */
+export function handleSignalling(request, env) {
+	return new Response(JSON.stringify({ signalling: env.SIGNALLING_URL || null }), {
+		headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+	});
 }
 
 /* the Worker's part: /net/rooms/new (host) and /net/rooms/<code> (join) */

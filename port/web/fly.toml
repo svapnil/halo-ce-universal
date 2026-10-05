@@ -1,18 +1,30 @@
-# The relay of native games (main.go; port/web/NETWORK.md, "Native games")
-# on Fly.io. In this folder:
+# The machine on Fly.io (Dockerfile; port/web/NETWORK.md, "The machine"): the
+# relay of native games (relay/main.go) and, beside it, the signalling of
+# games between browsers (signalling/). In this folder:
 #
 #   fly apps create <app>                   (and set `app` below)
 #   fly ips allocate-v4 --yes               a dedicated IPv4: Fly takes UDP
 #                                           only on one (not shared, not IPv6);
 #                                           RELAY_PUBLIC_IP below is it
 #   fly secrets set RELAY_TOKEN_SECRET=...  the Worker's too (worker/relay.js)
+#   fly secrets set REALTIME_APP_ID=... REALTIME_APP_TOKEN=...
+#                                           the signalling's Realtime SFU app
 #   fly deploy
 #
-# Then wrangler.toml's RELAY_URL is wss://<app>.fly.dev/.
+# Then wrangler.toml's RELAY_URL is wss://<app>.fly.dev/, and its
+# SIGNALLING_URL https://<app>.fly.dev.
+#
+# A DEPLOY ENDS THE GAMES IN PROGRESS, whichever server it is for: the
+# machine starts again, and with it the relay, whose sockets native games'
+# pages play through (they are dropped from their games). Games between
+# browsers go on (their traffic is the SFU's), but their rooms end: no one
+# else joins them until their hosts host again. Deploy when few play
+# (`fly logs`, and /healthz: the relay's sessions).
 #
 # ONE machine: the WebSocket reaches the machine of the page's region, but a
 # peer's UDP reaches the dedicated IP's nearest machine, which must be the
-# one holding the page's sockets. More regions: an app (and IP) for each, and
+# one holding the page's sockets (and a room's pages must all reach the
+# machine that has the room). More regions: an app (and IP) for each, and
 # the Worker gives each page the nearest's address.
 
 app = "halo-web-relay"
@@ -33,11 +45,18 @@ primary_region = "iad"
   # each session's numbers every 5 seconds (`fly logs`): round trip, traffic,
   # tunnel loss, refusals; while native games are new
   RELAY_REPORT = "1"
+  # the signalling (fly_start.sh starts it), on this machine only: its
+  # WebSockets (/net/rooms/) come through the relay's port
+  RELAY_SIGNALLING = "127.0.0.1:8791"
+  SIGNALLING_PORT = "8791"
+  SIGNALLING_ORIGINS = "https://openhaloce.com,https://www.openhaloce.com"
 
 [deploy]
   strategy = "immediate"
 
-# the pages' WebSockets (TLS at Fly's edge), and /healthz
+# the pages' WebSockets (TLS at Fly's edge), the relay's and the
+# signalling's, and /healthz. As many as the two take: the relay's 400
+# sessions (main.go) and the signalling's 800 pages (application.ex)
 [[services]]
   internal_port = 8790
   protocol = "tcp"
@@ -51,8 +70,8 @@ primary_region = "iad"
 
   [services.concurrency]
     type = "connections"
-    soft_limit = 300
-    hard_limit = 400
+    soft_limit = 1000
+    hard_limit = 1200
 
   [[services.http_checks]]
     interval = "15s"

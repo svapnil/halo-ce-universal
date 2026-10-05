@@ -33,6 +33,9 @@ bucket_name = "open-halo-ce"
 [dev]
 port = 8765
 
+# TODO: remove (with HOST_LIMIT and JOIN_LIMIT below, and a deleted_classes
+# migration) once the pages have moved to the signalling's server
+# (SIGNALLING_URL below; NETWORK.md, "Removing the Worker's rooms").
 # Network play's signalling (worker/rooms.js, NETWORK.md): one GameRoom for
 # each hosted game. Its Realtime SFU app is in two secrets, REALTIME_APP_ID
 # and REALTIME_APP_TOKEN: `npx wrangler secret put` for Cloudflare, and
@@ -58,13 +61,18 @@ name = "JOIN_LIMIT"
 namespace_id = "1002"
 simple = { limit = 20, period = 60 }
 
-# Native games (NETWORK.md): the relay (port/web/relay, on Fly.io), and the
-# tokens for it that worker/relay.js gives the site's pages, signed with the
-# secret RELAY_TOKEN_SECRET (`npx wrangler secret put`; .dev.vars for `npm
-# run dev`), which the relay has too. An address gets at most 10 a minute
-# (a page asks once per connection to the relay).
+# Native games (NETWORK.md): the relay (port/web/relay, on Fly.io: fly.toml),
+# and the tokens for it that worker/relay.js gives the site's pages, signed
+# with the secret RELAY_TOKEN_SECRET (`npx wrangler secret put`; .dev.vars
+# for `npm run dev`), which the relay has too. An address gets at most 10 a
+# minute (a page asks once per connection to the relay).
 [vars]
 RELAY_URL = "wss://halo-web-relay.fly.dev/"
+# The signalling's server (port/web/signalling, on the relay's machine;
+# NETWORK.md, "The signalling's server"): with this, the pages make their
+# rooms there, and without it in the GameRoom above. (For `npm run dev`, in
+# .dev.vars: SIGNALLING_URL=http://localhost:8791, with the server run there.)
+SIGNALLING_URL = "https://halo-web-relay.fly.dev"
 
 [[ratelimits]]
 name = "RELAY_LIMIT"

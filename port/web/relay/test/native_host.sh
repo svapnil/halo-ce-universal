@@ -36,7 +36,7 @@ elif [ ! -f "$work/release/$tag/halo" ]; then
 	(cd "$work/release/$tag" && unzip -o -q halo-linux-release.zip)
 fi
 docker build --platform linux/amd64 -q -t halo-native-host -f native-host.Dockerfile . >/dev/null
-docker build -q -t halo-web-relay .. >/dev/null
+docker build -q -t halo-web-relay --target relay ../.. >/dev/null
 docker network create halonet >/dev/null 2>&1 || true
 docker rm -f halo-native-host halo-relay >/dev/null 2>&1 || true
 

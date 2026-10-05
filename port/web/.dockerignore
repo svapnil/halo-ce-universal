@@ -1,0 +1,9 @@
+# the machine's image (Dockerfile) takes the two servers only
+*
+!fly_start.sh
+!relay
+relay/test
+!signalling
+signalling/_build
+signalling/deps
+signalling/test
