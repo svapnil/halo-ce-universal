@@ -192,6 +192,9 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         f"-include {fixups_header}",
         f"-I{port_include}",
         game_defines_and_includes(config),
+        # the headers of the port's own game units (port/linux/game), for
+        # the game sources that call them (as tools/linux_build.py)
+        f"-iquote {Path(config['game_sources'])}",
         sdk_flags,
     ])
     for source in game_sources(config):
