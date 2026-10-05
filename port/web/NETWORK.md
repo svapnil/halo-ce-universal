@@ -547,7 +547,8 @@ signalling (`RELAY_SIGNALLING`), so the two share an address,
   else joins until their hosts host again. So deploy when few play
   (`fly logs` has each relay session; `/healthz` counts them).
 - **The CPU is the relay's first.** The relay carries games' packets, and
-  the machine has one shared CPU. The signalling runs at the lowest
+  the machine's four shared CPUs have one allowance between them (a quarter
+  of one CPU for long: `fly.toml`). The signalling runs at the lowest
   priority (`nice -n 19`), with one scheduler that sleeps as soon as it has
   nothing to do (`signalling/rel/vm.args.eex`: Erlang's spin for a while
   first, by default). Its work is small besides: a few messages and SFU
@@ -555,7 +556,7 @@ signalling (`RELAY_SIGNALLING`), so the two share an address,
   started again and the relay's games go on; if the relay ends, the machine
   does.
 - **Memory.** About 140 MB for the signalling, idle, and 10 MB for the
-  relay, of the machine's 512 MB.
+  relay, of the machine's 1 GB.
 
 Measured (2026-10-05), the image on one CPU of a laptop's Docker, with a
 page of the relay's answering its pings: idle, the image took 0.03% of the

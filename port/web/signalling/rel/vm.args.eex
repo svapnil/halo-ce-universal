@@ -1,8 +1,9 @@
 ## The machine is the relay's (port/web/fly.toml), whose packets are a game's:
-## this takes its one CPU only when the relay leaves it (fly_start.sh runs it
-## at the lowest priority too).
+## this takes a CPU only when the relay leaves one (fly_start.sh runs it at
+## the lowest priority too), and little of the allowance the machine's CPUs
+## share.
 
-## one scheduler (the machine has one CPU), and one for long native calls
+## one scheduler (its work is small), and one for long native calls
 +S 1:1
 +SDcpu 1:1
 

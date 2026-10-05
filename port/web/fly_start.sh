@@ -3,9 +3,10 @@
 # machine"): the relay of native games, and beside it the signalling of games
 # between browsers.
 #
-# The relay carries games' packets, and the machine has one CPU: the
-# signalling runs at the lowest priority (and its Erlang does not spin:
-# signalling/rel/vm.args.eex), so it runs only when the relay does not. If it
+# The relay carries games' packets, and the machine's CPUs share one
+# allowance (fly.toml): the signalling runs at the lowest priority (and its
+# Erlang does not spin: signalling/rel/vm.args.eex), so it takes little of
+# it, and a CPU only when the relay leaves one. If it
 # ends it is started again, and the relay's games go on; if the relay ends,
 # the machine does, and Fly starts it again.
 

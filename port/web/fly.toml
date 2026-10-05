@@ -278,6 +278,12 @@ primary_region = "iad"
   [[services.ports]]
     port = 40031
 
+# Four shared CPUs, for their allowance: a shared CPU may be used 6.25% for
+# long (more spends a balance of 500 seconds, and then the machine is held
+# back, and its games with it), and a machine's CPUs share theirs: a quarter
+# of one CPU here. A page in a native game took about 1.5% of one (measured
+# on shared-cpu-1x, 2026-10-05, with four pages at most): some 15 pages for
+# long, where one CPU had 4. 1 GB is the least this size takes.
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "512mb"
+  size = "shared-cpu-4x"
+  memory = "1gb"
