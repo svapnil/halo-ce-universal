@@ -12,6 +12,7 @@ only.
 
 import { logLine, mark, watchGame } from "./crash.js";
 import { setPlaying } from "./keys.js";
+import { startLoading } from "./loading.js";
 import { startLobby } from "./lobby.js";
 import { startNetBridge } from "./net_bridge.js";
 import { startRelayBridge } from "./relay_bridge.js";
@@ -35,11 +36,44 @@ function writeText(module, address, size, text) {
 	module.HEAPU8.set(encoded, address);
 }
 
+/* halo.wasm's size when the page was built; 0 if it was not there */
+const PROGRAM_SIZE = typeof __PROGRAM_SIZE__ === "undefined" ? 0 : __PROGRAM_SIZE__;
+
+/* The game's program, instantiated as halo.js would by itself (compiled as
+it comes), but for its bytes being counted on the way, for the loading
+panel: received(bytes, size), the size being 0 when it is not known. The
+browser compiles the server's own answer, and the count reads a copy of it:
+the browser keeps the compiled code for the next visit with that answer, as
+it did (not with one made here from the counted bytes). */
+async function instantiateProgram(address, imports, received) {
+	const response = await fetch(address, { credentials: "same-origin" });
+	if (!response.ok) {
+		throw new Error(`${address}: ${response.status}`);
+	}
+	/* (a compressed answer's length is not the program's: the page's build
+	knows that one, vite.config.js) */
+	const size = response.headers.has("Content-Encoding") ? PROGRAM_SIZE :
+		Number(response.headers.get("Content-Length")) || PROGRAM_SIZE;
+	const reader = response.clone().body.getReader();
+	(async () => {
+		for (let count = 0; ;) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+			count += value.byteLength;
+			received(count, size);
+		}
+	})().catch(() => {});
+	return WebAssembly.instantiateStreaming(response, imports);
+}
+
 /* onStatus receives Emscripten's status lines (loading, errors); onNet,
 network play's ({ state, invite, players, error, relay }: sfu_transport.js,
 and relay_bridge.js's state as relay); onLobby, the game's phase while it
-joins from an invite ({ phase, message }: lobby.js) */
-export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => {} }) {
+joins from an invite ({ phase, message }: lobby.js); onLoading, what the
+game waits for, or null ({ what, percent }: loading.js) */
+export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => {}, onLoading = () => {} }) {
 	if (started) {
 		return;
 	}
@@ -49,6 +83,7 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 		onStatus("This page needs cross-origin isolation (COOP and COEP headers): serve it with `npm run dev` (port/web/README.md).");
 		return;
 	}
+	const loading = startLoading(onLoading);
 	/* (crash.js reports it, and CrashPanel.jsx says that the game stopped) */
 	window.addEventListener("error", (event) => onStatus(`Error: ${event.message}`));
 
@@ -95,6 +130,7 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 				onNet({ ...net, relay });
 			};
 			watchGame(module);
+			loading.game(module);
 			/* (once the link to a host is up, the game joins its game: once
 			for each room joined) */
 			let joinAsked = false;
@@ -161,12 +197,27 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 			console.warn(text);
 		},
 		setStatus: onStatus,
+		// halo.js's own way, but for the loading panel being told of the
+		// program's bytes as they come
+		instantiateWasm: (imports, receive) => {
+			instantiateProgram("/halo.wasm", imports, loading.program).then(
+				({ instance, module }) => receive(instance, module),
+				/* (unhandled: crash.js takes it for the game's end, as it
+				does halo.js's own failure to load its program) */
+				(error) => {
+					throw new Error(`Cannot load halo.wasm: ${error.message}`);
+				});
+			return {};
+		},
 	};
 
 	// a classic script, so that the game's threads find halo.js by
 	// document.currentScript
 	const script = document.createElement("script");
 	script.src = "/halo.js";
-	script.onerror = () => onStatus("Cannot load halo.js: build it with `ninja web`.");
+	script.onerror = () => {
+		loading.stop();
+		onStatus("Cannot load halo.js: build it with `ninja web`.");
+	};
 	document.body.appendChild(script);
 }

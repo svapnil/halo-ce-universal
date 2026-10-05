@@ -90,6 +90,17 @@ keeps for a day (`worker.js`'s `MAP_LIFETIME`, as `Cache-Control`), so a
 visit within a day of the last reads them from its disk; a map replaced in
 the bucket can be the old one in a browser for that long.
 
+Loading: while the game waits for its data it draws nothing new, so the
+page shows a small panel over the picture with how much has come
+(`loading.js`, `App.jsx`'s `LoadingPanel`). As the game starts, that is
+`halo.wasm` and then the menus' map, before the first frame. Later it is a
+map from the server: the panel shows when the game's frames stand still
+while a request for a map is out, with how far into the map the bytes
+received reach (`web_pre.js` counts them in the game's threads, into
+`web_loading.c`'s state). A map the game reads ahead while the menus run
+does not show it. A map that is still coming is not a game that hangs
+(`crash.js`), however long it takes.
+
 The page asks the player to confirm they own the original game before the
 game loads (`App.jsx`). A Confirm is kept in the browser's `localStorage`,
 so it is asked once; a Deny is not kept, and the game does not load.

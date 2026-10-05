@@ -52,8 +52,9 @@ const TESTS = { abort: 1, trap: 2, hang: 3, oom: 4 };
 
 const JOURNAL_KEY = "halo-crash-journal-v1";
 const JOURNAL_INTERVAL = 3000;
-/* the game's frames standing still this long, in view, is a hang (a map
-loads in less) */
+/* the game's frames standing still this long, in view, is a hang. (But
+while a map comes from the server, which can take longer: loading.js says
+so, gameAlive) */
 const HANG_TIME = 30 * 1000;
 const MAXIMUM_REPORTS = 3;
 
@@ -71,6 +72,8 @@ let game = null;
 let previous = null;
 let reports = 0;
 let stopped = null;
+/* when the game last gave a sign of life: a frame, or gameAlive */
+let lastMoved = Date.now();
 
 /* what stopped the game ({ kind, message }), or null: the page's panel */
 export function stoppedState() {
@@ -107,6 +110,17 @@ export function mark(text) {
 			marks.shift();
 		}
 	}
+}
+
+/* the frames the game has run; null before the game has started */
+export function frameCount() {
+	return game ? game.view.getUint32(game.base + FRAMES, true) : null;
+}
+
+/* the game does something other than its frames (loading.js: a map it
+waits for is coming): it does not hang */
+export function gameAlive() {
+	lastMoved = Date.now();
 }
 
 /* the game's state, from its memory; null before the game has started */
@@ -305,7 +319,7 @@ export function watchGame(module) {
 	/* the frames: standing still, in view, the game hangs (or its thread
 	died without a word) */
 	let lastFrames = 0;
-	let lastMoved = Date.now();
+	lastMoved = Date.now();
 	setInterval(() => {
 		const state = gameState();
 		if (stopped) {
