@@ -504,9 +504,15 @@ BOOL platform_screen_mode(long *width, long *height)
 	alike. The page gives it its shape (port/web/app/src/styles.css) and SDL
 	gives its drawing buffer the pixels of that shape on the player's
 	display, so the game draws that shape with those pixels. Before the
-	window, the same from the page's layout. */
+	window, the same from the page's layout. Of Video Setup's sizes only
+	display.resolution_scaling is the browser's: "original" draws the Xbox's
+	640x480, which the display blit scales to the canvas (the page gives the
+	display and the window their sizes: port/linux/game/menu_functions.c's
+	video_rows_show). */
 	int buffer_width = 0, buffer_height = 0;
 
+	if (!strcmp(config_string("display.resolution_scaling"), "original"))
+		return FALSE;
 	if (platform_window)
 	{
 		emscripten_webgl_get_drawing_buffer_size(emscripten_webgl_get_current_context(),

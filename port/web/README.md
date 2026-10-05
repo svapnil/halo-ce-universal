@@ -151,6 +151,11 @@ changed.
     game's 4 GB: three of them (colour, depth, a copy), 8 MB each at
     1920x1080 and 33 MB each at 3840x2160. As the canvas changes size the
     old ones are freed (`render_targets_release_screen`).
+  - of Video Setup's sizes, only RESOLUTION SCALING is the browser's:
+    ORIGINAL draws the Xbox's 640x480, scaled to the canvas (4:3, with bars
+    in the 16:9 box), which costs a slow GPU the least. RESOLUTION and
+    WINDOW SIZE are not shown: the page gives the display and the window
+    their sizes (`video_rows_show` in `port/linux/game/menu_functions.c`).
   - each upload of streamed vertices or indices gets a buffer of its own
     (`web_upload_buffer` in `d3d8_gl.c`). In ANGLE, `bufferSubData` into a
     buffer that queued draws read copies the whole buffer first. With the

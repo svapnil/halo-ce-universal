@@ -190,6 +190,9 @@ build chooses it. Upstream's files change only in a few places, each in
 
 - `source/networking/network_server_manager.c`: a host starts its game
   alone (`server_ok_to_countdown`, `network_game_server_game_can_start`).
+- `port/linux/game/menu_functions.c`: Video Setup shows neither RESOLUTION
+  nor WINDOW SIZE (`video_rows_show`; `port/web/README.md`). Not network
+  play, but the one place the menus' code changes.
 - `port/linux/src/sdl_platform.c`: the mouse is not captured at start-up
   (a page would lock it at the first click, in the menus), a hidden page
   plays on a 33 ms timer (`web_wait_for_frame`, the fork's own), and the

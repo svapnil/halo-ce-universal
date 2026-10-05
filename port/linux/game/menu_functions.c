@@ -1340,6 +1340,24 @@ static void video_rows_show(struct widget_instance *list)
 
 	if (!setting || !resolution || !window_size)
 		return;
+#ifdef __EMSCRIPTEN__
+	/* port (browser build): neither. The page's canvas is the display and
+	the window alike, at the size the page gives it (sdl_platform.c's
+	platform_screen_mode), so the two have nothing to set: both are hidden,
+	and the rows after them move up into their place (once: they are shown
+	until then) */
+	if (resolution->visible || window_size->visible)
+	{
+		struct widget_instance *bar = named(list, "button_bar", 0);
+		short rise = window_size->next && window_size->next != bar ?
+			window_size->next->vertical_offset - window_size->vertical_offset : 0;
+
+		for (child = window_size->next; child && child != bar; child = child->next)
+			child->vertical_offset -= rise;
+		resolution->visible = window_size->visible = FALSE;
+	}
+	return;
+#endif
 	index = mode->parameters.list.selected_index;
 	shown = index >= 0 && index < setting->value_count && !strcmp(setting->values[index], "windowed") ?
 		window_size : resolution;
