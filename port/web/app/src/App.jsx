@@ -5,12 +5,12 @@ import { keepFromBrowser } from "./keys.js";
 
 /* The game's canvas. It never re-renders: the game owns it once started
 (game.js). */
-const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby }) {
+const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby, onLoading }) {
 	const canvas = useRef(null);
 
 	useEffect(() => {
 		canvas.current.focus();
-		startGame(canvas.current, { onStatus, onNet, onLobby });
+		startGame(canvas.current, { onStatus, onNet, onLobby, onLoading });
 		// SDL gives the canvas's drawing buffer the canvas's size at each of
 		// the window's resize events, and the game draws at that size
 		// (sdl_platform.c's platform_screen_mode). The canvas can change size
@@ -56,6 +56,8 @@ export default function App() {
 	const [status, setStatus] = useState("");
 	const [net, setNet] = useState(null);
 	const [lobby, setLobby] = useState({ phase: "other", message: "" });
+	/* what the game waits for (loading.js), or null */
+	const [loading, setLoading] = useState(null);
 	const [fullscreen, setFullscreen] = useState(false);
 	const [controlsOpen, setControlsOpen] = useState(false);
 	/* the game's volume, a percentage: null until the game tells it */
@@ -120,13 +122,14 @@ export default function App() {
 			<div className="console">
 				<div ref={frame} className="screen">
 					{notice === "confirmed" ?
-						<GameCanvas onStatus={setStatus} onNet={setNet} onLobby={setLobby} /> :
+						<GameCanvas onStatus={setStatus} onNet={setNet} onLobby={setLobby} onLoading={setLoading} /> :
 						<OwnershipNotice denied={notice === "denied"} onAnswer={(answer) => {
 							if (answer === "confirmed") {
 								rememberNoticeConfirmed();
 							}
 							setNotice(answer);
 						}} />}
+					<LoadingPanel loading={loading} />
 					<OnlineToast lobby={lobby} net={net} onClose={focusGame} />
 					<CrashPanel />
 					{controlsOpen && <ControlsDialog onClose={() => { setControlsOpen(false); focusGame(); }} />}
@@ -148,6 +151,31 @@ export default function App() {
 				</div>
 			</div>
 		</main>
+	);
+}
+
+/* Over the game while it waits for its data, and draws nothing new: as it
+starts (the picture is black until the menus' map has come), and later for
+a map from the server (the picture stands still, or is black). How much has
+come is loading.js's; without a size to measure it against, the bar only
+moves. */
+function LoadingPanel({ loading }) {
+	if (!loading) {
+		return null;
+	}
+	const { what, percent } = loading;
+	const label = what === "map" ? "Loading map" : "Loading";
+	return (
+		<div className="loading" role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100}
+			aria-valuenow={percent ?? undefined}>
+			<div className="loading-text">
+				<span>{label}</span>
+				{percent !== null && <span className="loading-percent">{percent}%</span>}
+			</div>
+			<div className={`loading-track${percent === null ? " loading-unknown" : ""}`}>
+				<div className="loading-bar" style={percent === null ? undefined : { width: `${percent}%` }} />
+			</div>
+		</div>
 	);
 }
 

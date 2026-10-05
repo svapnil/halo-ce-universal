@@ -281,6 +281,74 @@ screen's shape (the game keeps to 4:3 at the narrowest, and bars the rest) */
 	outline-offset: 1px;
 }
 
+/* what the game waits for (App.jsx's LoadingPanel): small, in the middle of
+the picture, and the game's to click through */
+.loading {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	width: min(240px, calc(100% - 48px));
+	box-sizing: border-box;
+	padding: 12px 14px 14px;
+	border: 1px solid var(--edge);
+	border-radius: 6px;
+	background: rgb(21 24 29 / 0.94);
+	box-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+	transform: translate(-50%, -50%);
+	pointer-events: none;
+}
+
+.loading-text {
+	display: flex;
+	justify-content: space-between;
+	color: var(--text-strong);
+}
+
+.loading-percent {
+	color: var(--text);
+	font-variant-numeric: tabular-nums;
+}
+
+.loading-track {
+	height: 4px;
+	border-radius: 2px;
+	background: var(--edge);
+	overflow: hidden;
+}
+
+.loading-bar {
+	height: 100%;
+	border-radius: 2px;
+	background: var(--text-strong);
+	transition: width 0.2s linear;
+}
+
+/* (no size to measure against: the bar goes across, again and again) */
+.loading-unknown .loading-bar {
+	width: 40%;
+	animation: loading-across 1.2s ease-in-out infinite;
+}
+
+@keyframes loading-across {
+	from { transform: translateX(-100%); }
+	to { transform: translateX(250%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.loading-bar {
+		transition: none;
+	}
+
+	.loading-unknown .loading-bar {
+		width: 100%;
+		animation: none;
+		opacity: 0.5;
+	}
+}
+
 .toast {
 	position: absolute;
 	top: 12px;

@@ -10,7 +10,7 @@ pile up).
 */
 
 import { execSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import { rmSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
@@ -29,9 +29,19 @@ function buildName() {
 	}
 }
 
+/* halo.wasm's size, for the loading panel's percentage (app/src/game.js):
+the server sends it compressed, without its length. 0 before `ninja web`. */
+function programSize() {
+	try {
+		return statSync(`${outDir}/halo.wasm`).size;
+	} catch {
+		return 0;
+	}
+}
+
 export default defineConfig({
 	root: "app",
-	define: { __BUILD__: JSON.stringify(buildName()) },
+	define: { __BUILD__: JSON.stringify(buildName()), __PROGRAM_SIZE__: programSize() },
 	plugins: [
 		react(),
 		{
