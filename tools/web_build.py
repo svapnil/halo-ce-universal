@@ -15,7 +15,7 @@ from .linux_build import (
     EXPAT_DIR, EXPAT_SOURCES, GAME_FLAGS, KCP_DIR, LINUX_ABI_FLAGS, MBEDTLS_DIR, MONOCYPHER_DIR, OPTIMISATION,
     PLATFORM_FLAGS, PORT_CONFIG, PORT_DIR, POSIX_FLAGS, TOML_DIR, XDK_INCLUDE, _load_port_config,
     game_defines_and_includes, game_sources, musl_math_cflags, musl_math_sources,
-    updater_defines, xdk_headers,
+    updater_defines, xdk_headers, ZLIB_DEFINES, ZLIB_DIR, ZLIB_SOURCES,
 )
 from .ninja_syntax import Writer
 
@@ -224,6 +224,7 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         f"-I{EXPAT_DIR}",
         f"-I{KCP_DIR}",
         f"-I{MONOCYPHER_DIR}",
+        f"-I{ZLIB_DIR}",
         "-Isource -Isource/cseries",
         sdk_flags,
     ])
@@ -272,6 +273,10 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         add_object(EXPAT_DIR / name, " ".join([abi, "-std=gnu11", f"-I{EXPAT_DIR}", "-w"]))
     for name in ("monocypher.c", "monocypher-ed25519.c"):
         add_object(MONOCYPHER_DIR / name, " ".join([abi, "-std=gnu11", "-w"]))
+    # the port's zlib (zlib_prefixed.h: the menus' and the HUD's PNGs), as the
+    # Linux build has it
+    for name in ZLIB_SOURCES:
+        add_object(ZLIB_DIR / name, " ".join([abi, "-std=gnu11", *ZLIB_DEFINES, "-w"]))
     for source in sorted((MBEDTLS_DIR / "library").glob("*.c")):
         add_object(source, " ".join(posix_abi + [mbedtls_include, f"-I{MBEDTLS_DIR / 'library'}",
                                                  "-fno-builtin-wcslen", "-w"]))
