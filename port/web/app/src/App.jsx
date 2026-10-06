@@ -47,8 +47,9 @@ function captureMouse(canvas) {
 	if (document.pointerLockElement === canvas || !window.Module?._web_mouse_wants_capture?.()) {
 		return;
 	}
-	// (refused for a moment after Esc frees the mouse: the next click again)
-	Promise.resolve(canvas.requestPointerLock()).catch(() => {});
+	// (refused for a moment after Esc frees the mouse: the next click again;
+	// iOS has no pointer lock at all)
+	Promise.resolve(canvas.requestPointerLock?.()).catch(() => {});
 }
 
 export default function App() {
@@ -101,6 +102,10 @@ export default function App() {
 		const now = Boolean(document.fullscreenElement);
 		const want = on === -1 ? !now : Boolean(on);
 		if (want && !now) {
+			if (!frame.current.requestFullscreen) {
+				setStatus("Fullscreen is not available in this browser.");
+				return;
+			}
 			frame.current.requestFullscreen().catch((error) => setStatus(`Fullscreen: ${error.message}`));
 		} else if (!want && now) {
 			document.exitFullscreen();

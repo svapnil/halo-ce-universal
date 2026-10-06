@@ -43,7 +43,7 @@ WEB_GAME_RENAMES: Dict[str, List[str]] = {
     "source/shell/shell_xbox.c": ["main=halo_main"],
     # (the browser's online games run once a frame with the network tests:
     # port/web/src/web_lobby.c)
-    "source/main/main.c": ["network_test_update=web_frame_update"],
+    "source/main/main.c": ["network_test_update=web_frame_update", "exit=web_exit"],
     "source/cache/cache_files_windows.c": ["CreateThread=halo_web_create_thread_void"],
     "source/rasterizer/xbox/rasterizer_xbox_text.c": [
         "rasterizer_set_texture_bitmap_data=halo_web_rasterizer_set_texture_bitmap_data"],
@@ -93,7 +93,12 @@ P2P_FUNCTIONS = [
 # has (port/web/src/web_clipboard.c)
 WEB_PLATFORM_RENAMES: Dict[str, List[str]] = {
     "sdl_platform.c": ["platform_clipboard_get=platform_sdl_clipboard_get",
-                       "platform_clipboard_set=platform_sdl_clipboard_set"],
+                       "platform_clipboard_set=platform_sdl_clipboard_set",
+                       "exit=web_exit"],
+    # the game's exits (its Quit: xbox_xapi.c's XLaunchNewImage; the SDL quit
+    # event) go through port/web/src/web_crash.c's, which tells the page first
+    "xbox_xapi.c": ["exit=web_exit"],
+    "updater.c": ["exit=web_exit"],
 }
 NATIVE_INTERNET_PLAY_UNITS = {"p2p.c", "p2p_signal.c", "p2p_crypto.c", "p2p_discord.c", "p2p_lobby.c"}
 DESKTOP_INTERNET_PLAY_UNITS = {"posix_upnp.c"}

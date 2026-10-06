@@ -215,6 +215,10 @@ function stop(kind, message, stack = "") {
 /* an error of the page's that is not the game stopping: reported, and the
 page goes on */
 function reportError(message, stack) {
+	/* (after the game's own end, what its listeners left behind fails) */
+	if (stopped?.kind === "exit" || /pointer lock/i.test(message)) {
+		return;
+	}
 	mark(`error: ${message}`);
 	send({ version: 1, kind: "error", message: redact(message).slice(0, 500), stack: redact(stack).slice(0, 6000),
 		time: new Date().toISOString(), ...context(), log: lines.slice(-100).map(redact) });
@@ -256,6 +260,21 @@ function takePreviousJournal() {
 /* ---------- the page's */
 
 /* before the game loads: the errors, and the visit before this one */
+/* the game's end: its main returned (web_crash.c's exited, above), or it
+called exit(), as its Quit does (xbox_xapi.c's XLaunchNewImage, or the SDL
+quit event), which the runtime passes to the page's thread, where it throws
+an ExitStatus (the error listener below). SDL's listeners on the page's
+events are removed: each event would be passed to the game's thread, which
+is gone, and the runtime aborts on that ("emscripten_proxy_async failed",
+14 s after a Quit: the launch day's 113 reports of a crash that was a
+Quit). */
+function gameExited(code) {
+	stop("exit", `The game ended (${code})`);
+	try {
+		window.JSEvents?.removeAllEventListeners?.();
+	} catch {}
+}
+
 export function startCrashWatch() {
 	previous = takePreviousJournal();
 	if (previous && !previous.ended && previous.game) {
@@ -270,9 +289,18 @@ export function startCrashWatch() {
 		const error = event.error;
 		const message = error?.message || event.message || "error";
 		const stack = error?.stack || `${event.filename}:${event.lineno}`;
+		/* (the game's exit(): the runtime's ExitStatus, "Program terminated
+		with exit(0)") */
+		if (error?.name === "ExitStatus" || /^Program terminated with exit\(/.test(message)) {
+			gameExited(error?.status ?? Number((/exit\((\d+)\)/.exec(message) || [])[1] ?? 0));
+			return;
+		}
 		/* (the browser's own notes, and other sites' scripts, are no one's
 		failing) */
 		if (/ResizeObserver|^Script error/.test(message)) {
+			return;
+		}
+		if (stopped?.kind === "exit") {
 			return;
 		}
 		if (isGameError(message, stack)) {
@@ -289,6 +317,9 @@ export function startCrashWatch() {
 			return;
 		}
 		const message = reason?.message || String(reason);
+		if (stopped?.kind === "exit") {
+			return;
+		}
 		if (isGameError(message, reason?.stack || "")) {
 			stop("exception", message, reason?.stack || "");
 		} else {
@@ -326,7 +357,7 @@ export function watchGame(module) {
 			return;
 		}
 		if (state.exited) {
-			stop("exit", `The game ended (${state.exitCode})`);
+			gameExited(state.exitCode);
 		} else if (state.contextLost) {
 			stop("context-lost", "The browser took the game's graphics away (WebGL context lost)");
 		} else if (state.frames !== lastFrames || document.visibilityState !== "visible") {

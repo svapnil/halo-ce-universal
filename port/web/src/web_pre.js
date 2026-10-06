@@ -22,6 +22,14 @@ first already, so more bytes come than the map has. They are not added up:
 what is told is how far into the map the bytes received reach.
 */
 if (typeof importScripts == "function") {
+	/* The game's threads have no Gamepad API (a worker's navigator lacks
+	getGamepads), but SDL's gamepad code asks it from the game's thread when a
+	gamepad is opened (its rumble: EM_ASM in SDL_emscriptenjoystick.c), which
+	ended the game of anyone with a gamepad plugged in. None here, then; the
+	gamepads themselves are read through the page's thread. */
+	if (typeof navigator != "undefined" && typeof navigator.getGamepads != "function") {
+		navigator.getGamepads = () => [];
+	}
 	var haloKeepStack = (error) => {
 		try {
 			var text = String(error && error.stack || error && error.message || error);

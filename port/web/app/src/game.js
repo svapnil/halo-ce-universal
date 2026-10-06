@@ -87,6 +87,14 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 		onStatus("This page needs cross-origin isolation (COOP and COEP headers): serve it with `npm run dev` (port/web/README.md).");
 		return;
 	}
+	/* the game suspends each frame (JSPI: sdl_platform.c's web_wait_for_frame),
+	which Chrome 137, Firefox 153, Safari 27 and iOS 27 have; before them,
+	halo.js threw at its first line (launch day: 400 such reports, most from
+	Safari 26 and iOS 26) */
+	if (typeof WebAssembly.Suspending !== "function") {
+		onStatus("This browser cannot run the game yet. It needs Chrome 137, Firefox 153, Safari 27 or iOS 27, or later.");
+		return;
+	}
 	const loading = startLoading(onLoading);
 	/* (crash.js reports it, and CrashPanel.jsx says that the game stopped) */
 	window.addEventListener("error", (event) => onStatus(`Error: ${event.message}`));

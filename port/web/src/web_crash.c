@@ -213,6 +213,25 @@ void web_crash_frame(void)
 }
 
 /* web_main.c's: the game's main returned */
+void web_crash_exited(int code);
+
+/* The game's exit() (its Quit: xbox_xapi.c's XLaunchNewImage, or the SDL
+quit event; tools/web_build.py renames those units' exit to this), on the
+game's thread. SDL's listeners on the page's events are removed first, on
+the page's thread: each event would be passed to this thread, which is
+about to be gone, and the runtime aborts on that ("emscripten_proxy_async
+failed": the launch day's 113 reports of a crash that was a Quit, and the
+page showed the player a crash). The page is told of the end too, as of a
+return from the game's main (web_main.c). */
+_Noreturn void web_exit(int code)
+{
+	MAIN_THREAD_EM_ASM({
+		try { JSEvents.removeAllEventListeners(); } catch (e) {}
+	});
+	web_crash_exited(code);
+	exit(code);
+}
+
 void web_crash_exited(int code)
 {
 	state.exit_code = code;
