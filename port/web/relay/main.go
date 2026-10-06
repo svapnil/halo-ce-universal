@@ -133,9 +133,12 @@ const (
 	// browsers only), and sends the host about 35 datagrams (5 KiB) a second
 	packetsPerSecond = 200
 	bytesPerSecond   = 256 << 10
-	// and from them: the host sends a joiner about 40 (15 KiB) a second
+	// and from them: the host sends a joiner about 40 (15 KiB) a second in
+	// multiplayer, and some 250 KiB in a big co-op game (the host's AI goes to
+	// every player). The cap bounds what one session can cost the machine
+	// and the egress bill: a game past it loses packets at the relay.
 	packetsInPerSecond = 500
-	bytesInPerSecond   = 512 << 10
+	bytesInPerSecond   = 256 << 10
 	// to the brokers: a few small messages a second
 	tcpBytesPerSecond = 64 << 10
 	// a page looks up the brokers and STUN servers as it starts, and again

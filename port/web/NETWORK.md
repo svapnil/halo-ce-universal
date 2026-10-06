@@ -426,8 +426,8 @@ them. What a browser lacks, real sockets, a relay lends it:
     bound to `fly-global-services`, and does not translate ports;
   - only ports listed one by one, each its own `[[services]]`: a
     `start_port`/`end_port` range validates, but takes nothing in. Each
-    session takes a port of `RELAY_UDP_PORTS` (32, for now: 32 pages in
-    native games at once), and is reached at the dedicated IP and that port
+    session takes a port of `RELAY_UDP_PORTS` (96: 96 pages in native
+    games at once), and is reached at the dedicated IP and that port
     as it is (no NAT: the desktop's hole punching gets through);
   - what the machine sends first (a STUN request, a punch) leaves from its
     egress address, not the dedicated IP, and STUN reports that one, which
@@ -474,10 +474,12 @@ is worth little for anything else.
   one else reaches a page through it.
 - **Caps**, for a page that joins (a joiner sends its host about 35
   datagrams, 5 KiB, a second, and gets about 40, 15 KiB). Each session: 200
-  datagrams and 256 KiB a second to its peers, 500 and 512 KiB from them,
+  datagrams and 256 KiB a second to its peers, 500 and 256 KiB from them
+  (a big co-op game sends each player about 250 KiB: past the cap, it loses
+  packets at the relay),
   64 KiB a second to the brokers, 2 UDP and 6 TCP sockets, 16
   destinations, 30 lookups a minute (10 at once). Sessions: 4 from an
-  address, 400 in all, and one UDP port each (32 on Fly.io, for now).
+  address, 400 in all, and one UDP port each (96 on Fly.io).
 
 At worst, then, a token buys a few hundred small datagrams, shaped like the
 desktop's, to an address that does not answer: nothing amplified, and

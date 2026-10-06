@@ -36,7 +36,7 @@ primary_region = "iad"
   # ports below (it does not translate them), and replies from there go out
   # from the dedicated IP, so the relay's sockets are reached as they are
   RELAY_UDP_HOST = "fly-global-services"
-  RELAY_UDP_PORTS = "40000-40031"
+  RELAY_UDP_PORTS = "40000-40095"
   # the dedicated IPv4 (`fly ips list`): what leaves the machine goes out
   # from its egress address, which STUN sees, but only this takes UDP in, so
   # the relay tells pages this one in STUN's answers
@@ -83,8 +83,9 @@ primary_region = "iad"
 
 # the sessions' UDP sockets, one port each (RELAY_UDP_PORTS): Fly routes UDP
 # only to ports listed one by one (a start_port/end_port range takes none in),
-# each its own service. 32 ports: 32 pages in native games at once. More:
-# more blocks, and RELAY_UDP_PORTS to match.
+# each its own service. 96 ports: 96 pages in native games at once (the
+# first evening after launch had 79 connections at once, with 32 ports).
+# More: more blocks, and RELAY_UDP_PORTS to match.
 
 [[services]]
   internal_port = 40000
@@ -277,6 +278,390 @@ primary_region = "iad"
   protocol = "udp"
   [[services.ports]]
     port = 40031
+
+[[services]]
+  internal_port = 40032
+  protocol = "udp"
+  [[services.ports]]
+    port = 40032
+
+[[services]]
+  internal_port = 40033
+  protocol = "udp"
+  [[services.ports]]
+    port = 40033
+
+[[services]]
+  internal_port = 40034
+  protocol = "udp"
+  [[services.ports]]
+    port = 40034
+
+[[services]]
+  internal_port = 40035
+  protocol = "udp"
+  [[services.ports]]
+    port = 40035
+
+[[services]]
+  internal_port = 40036
+  protocol = "udp"
+  [[services.ports]]
+    port = 40036
+
+[[services]]
+  internal_port = 40037
+  protocol = "udp"
+  [[services.ports]]
+    port = 40037
+
+[[services]]
+  internal_port = 40038
+  protocol = "udp"
+  [[services.ports]]
+    port = 40038
+
+[[services]]
+  internal_port = 40039
+  protocol = "udp"
+  [[services.ports]]
+    port = 40039
+
+[[services]]
+  internal_port = 40040
+  protocol = "udp"
+  [[services.ports]]
+    port = 40040
+
+[[services]]
+  internal_port = 40041
+  protocol = "udp"
+  [[services.ports]]
+    port = 40041
+
+[[services]]
+  internal_port = 40042
+  protocol = "udp"
+  [[services.ports]]
+    port = 40042
+
+[[services]]
+  internal_port = 40043
+  protocol = "udp"
+  [[services.ports]]
+    port = 40043
+
+[[services]]
+  internal_port = 40044
+  protocol = "udp"
+  [[services.ports]]
+    port = 40044
+
+[[services]]
+  internal_port = 40045
+  protocol = "udp"
+  [[services.ports]]
+    port = 40045
+
+[[services]]
+  internal_port = 40046
+  protocol = "udp"
+  [[services.ports]]
+    port = 40046
+
+[[services]]
+  internal_port = 40047
+  protocol = "udp"
+  [[services.ports]]
+    port = 40047
+
+[[services]]
+  internal_port = 40048
+  protocol = "udp"
+  [[services.ports]]
+    port = 40048
+
+[[services]]
+  internal_port = 40049
+  protocol = "udp"
+  [[services.ports]]
+    port = 40049
+
+[[services]]
+  internal_port = 40050
+  protocol = "udp"
+  [[services.ports]]
+    port = 40050
+
+[[services]]
+  internal_port = 40051
+  protocol = "udp"
+  [[services.ports]]
+    port = 40051
+
+[[services]]
+  internal_port = 40052
+  protocol = "udp"
+  [[services.ports]]
+    port = 40052
+
+[[services]]
+  internal_port = 40053
+  protocol = "udp"
+  [[services.ports]]
+    port = 40053
+
+[[services]]
+  internal_port = 40054
+  protocol = "udp"
+  [[services.ports]]
+    port = 40054
+
+[[services]]
+  internal_port = 40055
+  protocol = "udp"
+  [[services.ports]]
+    port = 40055
+
+[[services]]
+  internal_port = 40056
+  protocol = "udp"
+  [[services.ports]]
+    port = 40056
+
+[[services]]
+  internal_port = 40057
+  protocol = "udp"
+  [[services.ports]]
+    port = 40057
+
+[[services]]
+  internal_port = 40058
+  protocol = "udp"
+  [[services.ports]]
+    port = 40058
+
+[[services]]
+  internal_port = 40059
+  protocol = "udp"
+  [[services.ports]]
+    port = 40059
+
+[[services]]
+  internal_port = 40060
+  protocol = "udp"
+  [[services.ports]]
+    port = 40060
+
+[[services]]
+  internal_port = 40061
+  protocol = "udp"
+  [[services.ports]]
+    port = 40061
+
+[[services]]
+  internal_port = 40062
+  protocol = "udp"
+  [[services.ports]]
+    port = 40062
+
+[[services]]
+  internal_port = 40063
+  protocol = "udp"
+  [[services.ports]]
+    port = 40063
+
+[[services]]
+  internal_port = 40064
+  protocol = "udp"
+  [[services.ports]]
+    port = 40064
+
+[[services]]
+  internal_port = 40065
+  protocol = "udp"
+  [[services.ports]]
+    port = 40065
+
+[[services]]
+  internal_port = 40066
+  protocol = "udp"
+  [[services.ports]]
+    port = 40066
+
+[[services]]
+  internal_port = 40067
+  protocol = "udp"
+  [[services.ports]]
+    port = 40067
+
+[[services]]
+  internal_port = 40068
+  protocol = "udp"
+  [[services.ports]]
+    port = 40068
+
+[[services]]
+  internal_port = 40069
+  protocol = "udp"
+  [[services.ports]]
+    port = 40069
+
+[[services]]
+  internal_port = 40070
+  protocol = "udp"
+  [[services.ports]]
+    port = 40070
+
+[[services]]
+  internal_port = 40071
+  protocol = "udp"
+  [[services.ports]]
+    port = 40071
+
+[[services]]
+  internal_port = 40072
+  protocol = "udp"
+  [[services.ports]]
+    port = 40072
+
+[[services]]
+  internal_port = 40073
+  protocol = "udp"
+  [[services.ports]]
+    port = 40073
+
+[[services]]
+  internal_port = 40074
+  protocol = "udp"
+  [[services.ports]]
+    port = 40074
+
+[[services]]
+  internal_port = 40075
+  protocol = "udp"
+  [[services.ports]]
+    port = 40075
+
+[[services]]
+  internal_port = 40076
+  protocol = "udp"
+  [[services.ports]]
+    port = 40076
+
+[[services]]
+  internal_port = 40077
+  protocol = "udp"
+  [[services.ports]]
+    port = 40077
+
+[[services]]
+  internal_port = 40078
+  protocol = "udp"
+  [[services.ports]]
+    port = 40078
+
+[[services]]
+  internal_port = 40079
+  protocol = "udp"
+  [[services.ports]]
+    port = 40079
+
+[[services]]
+  internal_port = 40080
+  protocol = "udp"
+  [[services.ports]]
+    port = 40080
+
+[[services]]
+  internal_port = 40081
+  protocol = "udp"
+  [[services.ports]]
+    port = 40081
+
+[[services]]
+  internal_port = 40082
+  protocol = "udp"
+  [[services.ports]]
+    port = 40082
+
+[[services]]
+  internal_port = 40083
+  protocol = "udp"
+  [[services.ports]]
+    port = 40083
+
+[[services]]
+  internal_port = 40084
+  protocol = "udp"
+  [[services.ports]]
+    port = 40084
+
+[[services]]
+  internal_port = 40085
+  protocol = "udp"
+  [[services.ports]]
+    port = 40085
+
+[[services]]
+  internal_port = 40086
+  protocol = "udp"
+  [[services.ports]]
+    port = 40086
+
+[[services]]
+  internal_port = 40087
+  protocol = "udp"
+  [[services.ports]]
+    port = 40087
+
+[[services]]
+  internal_port = 40088
+  protocol = "udp"
+  [[services.ports]]
+    port = 40088
+
+[[services]]
+  internal_port = 40089
+  protocol = "udp"
+  [[services.ports]]
+    port = 40089
+
+[[services]]
+  internal_port = 40090
+  protocol = "udp"
+  [[services.ports]]
+    port = 40090
+
+[[services]]
+  internal_port = 40091
+  protocol = "udp"
+  [[services.ports]]
+    port = 40091
+
+[[services]]
+  internal_port = 40092
+  protocol = "udp"
+  [[services.ports]]
+    port = 40092
+
+[[services]]
+  internal_port = 40093
+  protocol = "udp"
+  [[services.ports]]
+    port = 40093
+
+[[services]]
+  internal_port = 40094
+  protocol = "udp"
+  [[services.ports]]
+    port = 40094
+
+[[services]]
+  internal_port = 40095
+  protocol = "udp"
+  [[services.ports]]
+    port = 40095
 
 # Four shared CPUs, for their allowance: a shared CPU may be used 6.25% for
 # long (more spends a balance of 500 seconds, and then the machine is held
