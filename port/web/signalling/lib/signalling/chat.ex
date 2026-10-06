@@ -6,6 +6,8 @@ defmodule Signalling.Chat do
   @moduledoc false
   use GenServer
 
+  alias Signalling.ChatFilter
+
   @topic "chat"
   @kept 50
   @longest_name 11
@@ -25,8 +27,14 @@ defmodule Signalling.Chat do
   # the last messages, oldest first
   def history, do: GenServer.call(__MODULE__, :history)
 
-  # a page says text (already its own: name/1, text/1, color/1)
-  def say(name, color, text), do: GenServer.cast(__MODULE__, {:say, name, color, text})
+  # a page says text (already its own: name/1, text/1, color/1). With a
+  # blocked word (Signalling.ChatFilter) in the text or the name, only the
+  # page is told: to it the message is said, with an id of its own, and the
+  # others see nothing, nor does the history keep it
+  def say(name, color, text) do
+    to = if ChatFilter.blocked?(text) or ChatFilter.blocked?(name), do: self(), else: :all
+    GenServer.cast(__MODULE__, {:say, name, color, text, to})
+  end
 
   def color(visitor), do: Enum.at(@colors, :erlang.phash2(visitor, length(@colors)))
 
@@ -62,8 +70,13 @@ defmodule Signalling.Chat do
   def handle_call(:history, _from, state), do: {:reply, :queue.to_list(state.messages), state}
 
   @impl true
-  def handle_cast({:say, name, color, text}, state) do
-    message = %{id: state.next, name: name, color: color, text: text, at: System.os_time(:second)}
+  def handle_cast({:say, name, color, text, page}, state) when is_pid(page) do
+    send(page, {:chat, message(state, name, color, text)})
+    {:noreply, %{state | next: state.next + 1}}
+  end
+
+  def handle_cast({:say, name, color, text, :all}, state) do
+    message = message(state, name, color, text)
     Phoenix.PubSub.local_broadcast(Signalling.PubSub, @topic, {:chat, message})
     messages = :queue.in(message, state.messages)
 
@@ -74,4 +87,7 @@ defmodule Signalling.Chat do
 
     {:noreply, %{state | next: state.next + 1, messages: messages, count: count}}
   end
+
+  defp message(state, name, color, text),
+    do: %{id: state.next, name: name, color: color, text: text, at: System.os_time(:second)}
 end

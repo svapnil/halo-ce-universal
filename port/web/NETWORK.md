@@ -28,8 +28,8 @@ Status:
   Worker's rooms").
 - To do, perhaps: the lobby's chat kept in a Postgres database, so that its
   history outlasts a restart of the server (refer to "The lobby's chat").
-- To do: moderation for the lobby's chat: it has length and rate limits, but
-  no mute, report or ban (refer to "The lobby's chat").
+- To do: moderation for the lobby's chat: it has length and rate limits, and
+  blocked words, but no mute, report or ban (refer to "The lobby's chat").
 
 ## Parts
 
@@ -597,6 +597,16 @@ tablets (the game takes the whole window).
   "color", "text", "at"}` for each, and `{"type": "error", "code": "busy"}`
   for a message refused. A name is at most 11 characters, a message 200;
   control characters are spaces. An address says at most 20 a minute.
+- **Blocked words.** A message whose text or name has one of
+  `signalling/lib/signalling/chat_blocked.txt`'s (`Signalling.ChatFilter`:
+  letters only, look-alikes such as `1` and `3` undone, each letter
+  repeated or not) is told only to the page that said it: it is shown
+  there, with an id of its own, so that nothing tells the sender; the other
+  pages never see it, and the history does not keep it (a reload loses it).
+  Only the slurs said most, not a moderator: a word that is in other words
+  is matched only on its own (`=coon`, not `raccoon`), and one that is not,
+  anywhere (`n i g g e r`). `mix test --no-start` checks the list against
+  words it must let through.
 - **The history** is the `Signalling.Chat` process's state (an Erlang
   `:queue`, not ETS): the last 50 messages, in memory only. A deploy, a
   crash or `fly_start.sh`'s restart forgets them, and the ids start again

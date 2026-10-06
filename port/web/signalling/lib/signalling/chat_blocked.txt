@@ -1,0 +1,36 @@
+# The lobby's chat's blocked words (Signalling.ChatFilter): a message, or a
+# name, with one of them is shown only to the page that said it.
+#
+# Each is matched letters only, lower case, with look-alikes undone (0 o,
+# 1 i, 3 e, 4 a, 5 s, 7 t, @ a, $ s, accents and Cyrillic letters), and
+# each letter repeated or not ("niiigger"). A word on its own line is found
+# anywhere, across spaces and punctuation ("n.i g g-e r"): only words that
+# are in no other word. A word after "=" is found only as a word of its own
+# (and its plural): "=coon" is not in "raccoon".
+
+nigger
+nigga
+faggot
+wetback
+towelhead
+zipperhead
+porchmonkey
+junglebunny
+chingchong
+heilhitler
+siegheil
+gasthejews
+whitepower
+
+=niglet
+=fag
+=kike
+=spic
+=spick
+=chink
+=gook
+=coon
+=beaner
+=raghead
+=tranny
+=trannie
