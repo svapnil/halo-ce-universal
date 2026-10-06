@@ -48,6 +48,8 @@ const chrome = spawn(process.env.CHROME || "/Applications/Google Chrome.app/Cont
 	"--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
 	"--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--window-size=1280,720",
 	"--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+	/* (the game's sound runs, as a player's does, but is not heard) */
+	"--mute-audio",
 ], { stdio: "ignore" });
 
 let address;

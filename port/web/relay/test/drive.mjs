@@ -11,6 +11,9 @@ CHROME: the browser (default: Google Chrome's place on macOS); CDP_PORT: its
 debugging port (9333: another for two runs at once); SCREENSHOT:
 a PNG file to save the first page as, at the end. The page's
 ownership notice is confirmed first, in the profile (a new one each run).
+The log ends with the tail of each page's game's own log, debug.txt (the
+network events, which the console does not carry), read from the game's
+memory as the crash reports are (app/src/crash.js).
 */
 import { spawn } from "node:child_process";
 import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -30,7 +33,8 @@ const chrome = spawn(process.env.CHROME || "/Applications/Google Chrome.app/Cont
 	"--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist",
 	"--disable-background-timer-throttling", "--disable-renderer-backgrounding",
 	"--disable-backgrounding-occluded-windows", "--autoplay-policy=no-user-gesture-required",
-	"--window-size=1280,720",
+	/* (the game's sound runs, as a player's does, but is not heard) */
+	"--mute-audio", "--window-size=1280,720",
 ], { stdio: "ignore" });
 
 async function browserAddress() {
@@ -115,6 +119,22 @@ await sleep(Number(seconds) * 1000);
 if (process.env.SCREENSHOT) {
 	const shot = await send("Page.captureScreenshot", { format: "png" }, first);
 	writeFileSync(process.env.SCREENSHOT, Buffer.from(shot.data, "base64"));
+}
+/* the game's debug.txt, its last 32 KB, from the ring web_crash.c keeps
+(the offsets are crash.js's LOG_WRITTEN, LOG and LOG_SIZE) */
+for (const [index, session] of [...tabSessions.values()].entries()) {
+	const result = await send("Runtime.evaluate", { returnByValue: true, expression: `(() => {
+		const module = window.Module;
+		if (!module || !module._web_crash_state) return "(the game has not started)";
+		const base = module._web_crash_state();
+		const bytes = new Uint8Array(module.HEAPU8.buffer);
+		const written = new DataView(module.HEAPU8.buffer).getUint32(base + 44, true);
+		const size = Math.min(written, 32768);
+		const tail = new Uint8Array(size);
+		for (let i = 0; i < size; i++) tail[i] = bytes[base + 48 + ((written - size + i) % 32768)];
+		return new TextDecoder().decode(tail);
+	})()` }, session);
+	log(`---- page ${index + 1}'s debug.txt (its end) ----\n${result.result?.value ?? JSON.stringify(result)}`);
 }
 log("done");
 chrome.kill();
