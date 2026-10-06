@@ -28,6 +28,8 @@ Status:
   Worker's rooms").
 - To do, perhaps: the lobby's chat kept in a Postgres database, so that its
   history outlasts a restart of the server (refer to "The lobby's chat").
+- To do: moderation for the lobby's chat: it has length and rate limits, but
+  no mute, report or ban (refer to "The lobby's chat").
 
 ## Parts
 
