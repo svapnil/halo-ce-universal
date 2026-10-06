@@ -1,0 +1,16 @@
+# Headers of the static assets (wrangler.toml's [assets]: Workers Assets
+# reads this file). The Worker sets the first three itself on what it serves
+# (worker/worker.js).
+
+/*
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: require-corp
+  Reporting-Endpoints: default="/net/reports"
+
+# the game's runtime and program, and the page's scripts and styles, under
+# names that carry their content's hash (vite.config.js): a browser keeps
+# them for good, and a deploy's new ones have new names
+/program/*
+  Cache-Control: public, max-age=31536000, immutable
+/ui/*
+  Cache-Control: public, max-age=31536000, immutable

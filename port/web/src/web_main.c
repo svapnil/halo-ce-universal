@@ -49,7 +49,10 @@ static const char *const map_names[] =
 #define WEB_DATA_ROOT "/game"
 #define WEB_SAVE_ROOT "/save"
 #define WEB_PERSIST_ROOT "/persist"
-#define FETCH_CHUNK_SIZE (4 << 20)
+/* a map is read from the server in chunks of this size, each one request of
+the Worker (port/web/worker/worker.js): the first campaign level, about 130
+MB, is 9 of them. (4 MB chunks made 55,000 requests on the launch day.) */
+#define FETCH_CHUNK_SIZE (16 << 20)
 
 static int mount_maps(void)
 {

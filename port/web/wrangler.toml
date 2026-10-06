@@ -20,7 +20,13 @@ workers_dev = true
 [assets]
 directory = "../../build/web"
 binding = "ASSETS"
-run_worker_first = true
+# The Worker runs first only for the maps (R2) and network play; the page's
+# files are served as static assets, which count no Worker requests (the
+# game's 16 threads each load its runtime: with the Worker first, launch day
+# had 67,000 requests for halo.js alone). Their headers are app/public's
+# _headers. "/" is no asset (html_handling none): it reaches the Worker,
+# which serves index.html.
+run_worker_first = ["/maps/*", "/net/*"]
 html_handling = "none"
 not_found_handling = "none"
 

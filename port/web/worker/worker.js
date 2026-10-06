@@ -1,17 +1,21 @@
 /*
 WORKER.JS
 
-Serves the browser build: the page (npm run build), halo.js and halo.wasm
-(ninja web) from the Worker's static assets (build/web), and the maps from an
-R2 bucket. Network play's signalling, at /net/, is rooms.js's (or, as
+Serves the browser build: the maps from an R2 bucket, and the page's
+index.html from the Worker's static assets (build/web). The page's other
+files (npm run build; halo.js and halo.wasm from ninja web, under hashed
+names) are served as static assets without this Worker (wrangler.toml's
+run_worker_first), with app/public/_headers' headers. Network play's signalling, at /net/, is rooms.js's (or, as
 /net/signalling tells the pages, the server's of port/web/signalling), and
 the relay's tokens, at /net/relay, relay.js's (NETWORK.md). The page's crash
 reports, at /net/crash and /net/reports, are crash.js's (CRASHES.md).
 
-Every response gets two things a plain file server does not give:
+Every response of this Worker gets two things a plain file server does not
+give:
 
 - cross-origin isolation (the COOP and COEP headers), without which the
-  browser gives a page no shared memory and so no threads;
+  browser gives a page no shared memory and so no threads (_headers gives
+  the static assets the same);
 - for the maps, HTTP range requests, with which the game reads a map a chunk
   at a time (WasmFS fetch backend; port/web/src/web_main.c). The backend
   first asks for the size with HEAD and `Range: bytes=0-`, and reads in

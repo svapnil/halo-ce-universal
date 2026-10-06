@@ -38,6 +38,10 @@ function writeText(module, address, size, text) {
 
 /* halo.wasm's size when the page was built; 0 if it was not there */
 const PROGRAM_SIZE = typeof __PROGRAM_SIZE__ === "undefined" ? 0 : __PROGRAM_SIZE__;
+/* halo.js's and halo.wasm's paths: the copies named by their content's
+hash (vite.config.js), which a browser keeps for good */
+const PROGRAM_JS = typeof __PROGRAM_JS__ === "undefined" ? "/halo.js" : __PROGRAM_JS__;
+const PROGRAM_WASM = typeof __PROGRAM_WASM__ === "undefined" ? "/halo.wasm" : __PROGRAM_WASM__;
 
 /* The game's program, instantiated as halo.js would by itself (compiled as
 it comes), but for its bytes being counted on the way, for the loading
@@ -200,7 +204,7 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 		// halo.js's own way, but for the loading panel being told of the
 		// program's bytes as they come
 		instantiateWasm: (imports, receive) => {
-			instantiateProgram("/halo.wasm", imports, loading.program).then(
+			instantiateProgram(PROGRAM_WASM, imports, loading.program).then(
 				({ instance, module }) => receive(instance, module),
 				/* (unhandled: crash.js takes it for the game's end, as it
 				does halo.js's own failure to load its program) */
@@ -212,9 +216,9 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 	};
 
 	// a classic script, so that the game's threads find halo.js by
-	// document.currentScript
+	// document.currentScript (each thread is a worker made from it)
 	const script = document.createElement("script");
-	script.src = "/halo.js";
+	script.src = PROGRAM_JS;
 	script.onerror = () => {
 		loading.stop();
 		onStatus("Cannot load halo.js: build it with `ninja web`.");
