@@ -1,7 +1,11 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { CrashPanel, SaveLogButton } from "./CrashPanel.jsx";
-import { startGame } from "./game.js";
+import { browserSupport, startGame } from "./game.js";
 import { keepFromBrowser } from "./keys.js";
+import { ChatPane } from "./Chat.jsx";
+import { joinLobby } from "./online.js";
+import { watchProfileName } from "./profile.js";
+import { TouchControls, useTouchDevice } from "./TouchControls.jsx";
 
 /* The game's canvas. It never re-renders: the game owns it once started
 (game.js). */
@@ -29,7 +33,10 @@ const GameCanvas = memo(function GameCanvas({ onStatus, onNet, onLobby, onLoadin
 			onContextMenu={(event) => event.preventDefault()}
 			onPointerDown={(event) => {
 				event.currentTarget.focus();
-				captureMouse(event.currentTarget);
+				/* (a finger is not the mouse: it aims by itself, sdl_platform.c) */
+				if (event.pointerType !== "touch") {
+					captureMouse(event.currentTarget);
+				}
 			}}
 			onKeyDown={(event) => keepFromBrowser(event) && event.preventDefault()}
 			// the keyboard back from a panel over the game, which kept the
@@ -66,6 +73,78 @@ export default function App() {
 	const volumeKept = useRef(null);
 	/* the notice's answer: the game starts only once it is confirmed */
 	const [notice, setNotice] = useState(() => noticeConfirmed() ? "confirmed" : "pending");
+	/* why this browser cannot run the game, or null (game.js) */
+	const [unsupported] = useState(browserSupport);
+	/* a phone or a tablet: the touch controls over the game */
+	const touch = useTouchDevice();
+	/* the chat beside the game where the window has room for it (a wide
+	window, with a mouse); else over the game, from the bar's button */
+	const chatDocked = useMediaQuery(CHAT_DOCKED_QUERY);
+	const [chatOpen, setChatOpen] = useState(false);
+	/* a phone sideways: the bar is hidden, for the picture to have the whole
+	screen, and shown over it from the corner's button (or by a status to
+	read) */
+	const landscape = useMediaQuery("(orientation: landscape)");
+	const barFloating = touch && landscape;
+	const [barOpen, setBarOpen] = useState(false);
+	const barHidden = barFloating && !barOpen;
+	/* no fullscreen for pages (an iPhone's Safari): the way is the Home
+	Screen, which the fullscreen button then explains; from the Home Screen
+	(standalone) there is nothing to ask for */
+	const [homeScreenHint, setHomeScreenHint] = useState(false);
+	const standalone = useMediaQuery("(display-mode: standalone)") || navigator.standalone === true;
+	/* the site's lobby (online.js): how many browsers have the site open (or
+	null), and its chat */
+	const [online, setOnline] = useState(null);
+	const [messages, setMessages] = useState([]);
+	const [chatNotice, setChatNotice] = useState("");
+	const [chatState, setChatState] = useState("connecting");
+	const siteLobby = useRef(null);
+
+	useEffect(() => {
+		const joined = joinLobby({ onCount: setOnline, onMessages: setMessages, onNotice: setChatNotice,
+			onState: setChatState });
+		siteLobby.current = joined;
+		/* the chat's name: the player's Halo profile's (profile.js) */
+		const stopName = watchProfileName((name) => joined.setName(name));
+		return () => {
+			stopName();
+			joined.stop();
+			siteLobby.current = null;
+		};
+	}, []);
+
+	function say(text) {
+		setChatNotice("");
+		return siteLobby.current?.say(text) ?? false;
+	}
+
+	/* (a status to read shows the hidden bar for a while; a status cleared
+	meanwhile leaves the bar until then) */
+	const statusTimer = useRef(null);
+	useEffect(() => {
+		if (!status || !barFloating) {
+			return;
+		}
+		setBarOpen(true);
+		clearTimeout(statusTimer.current);
+		statusTimer.current = setTimeout(() => setBarOpen(false), STATUS_SHOW_MS);
+	}, [status, barFloating]);
+
+	/* the floating bar goes as the game is touched (as the click goes down,
+	before the game's canvas has it) */
+	useEffect(() => {
+		if (!barFloating || !barOpen) {
+			return undefined;
+		}
+		const outside = (event) => {
+			if (!event.target.closest(".bar, .bar-toggle, .overlay")) {
+				setBarOpen(false);
+			}
+		};
+		document.addEventListener("pointerdown", outside, true);
+		return () => document.removeEventListener("pointerdown", outside, true);
+	}, [barFloating, barOpen]);
 
 	useEffect(() => {
 		const update = () => setFullscreen(document.fullscreenElement === frame.current);
@@ -103,10 +182,18 @@ export default function App() {
 		const want = on === -1 ? !now : Boolean(on);
 		if (want && !now) {
 			if (!frame.current.requestFullscreen) {
-				setStatus("Fullscreen is not available in this browser.");
+				if (/iPhone|iPad|iPod/.test(navigator.userAgent) || navigator.maxTouchPoints > 1) {
+					setHomeScreenHint(true);
+				} else {
+					setStatus("Fullscreen is not available in this browser.");
+				}
 				return;
 			}
-			frame.current.requestFullscreen().catch((error) => setStatus(`Fullscreen: ${error.message}`));
+			frame.current.requestFullscreen().then(
+				/* (a phone: sideways, as the game is played; where the browser
+				lets a page ask) */
+				() => screen.orientation?.lock?.("landscape").catch(() => {}),
+				(error) => setStatus(`Fullscreen: ${error.message}`));
 		} else if (!want && now) {
 			document.exitFullscreen();
 		}
@@ -119,44 +206,105 @@ export default function App() {
 
 	/* the game takes the keyboard back when a panel over it closes */
 	function focusGame() {
-		frame.current.querySelector("canvas").focus();
+		frame.current.querySelector("canvas")?.focus();
 	}
+
+	function closeChat() {
+		setChatOpen(false);
+		focusGame();
+	}
+
+	const chatProps = { count: online, messages, notice: chatNotice, state: chatState, onSay: say };
 
 	return (
 		<main className="page">
-			<div className="console">
-				<div ref={frame} className="screen">
-					{notice === "confirmed" ?
-						<GameCanvas onStatus={setStatus} onNet={setNet} onLobby={setLobby} onLoading={setLoading} /> :
-						<OwnershipNotice denied={notice === "denied"} onAnswer={(answer) => {
-							if (answer === "confirmed") {
-								rememberNoticeConfirmed();
-							}
-							setNotice(answer);
-						}} />}
-					<LoadingPanel loading={loading} />
-					<OnlineToast lobby={lobby} net={net} onClose={focusGame} />
-					<CrashPanel />
-					{controlsOpen && <ControlsDialog onClose={() => { setControlsOpen(false); focusGame(); }} />}
+			<div className="layout">
+				<div className="console">
+					<div ref={frame} className="screen">
+						{unsupported ?
+							<UnsupportedPanel reason={unsupported} /> :
+							notice === "confirmed" ?
+								<GameCanvas onStatus={setStatus} onNet={setNet} onLobby={setLobby} onLoading={setLoading} /> :
+								<OwnershipNotice denied={notice === "denied"} onAnswer={(answer) => {
+									if (answer === "confirmed") {
+										rememberNoticeConfirmed();
+									}
+									setNotice(answer);
+								}} />}
+						{!unsupported && notice === "confirmed" && touch &&
+							<TouchControls mainMenu={lobby.phase === "main-menu"} />}
+						{!homeScreenHint && <RotateHint />}
+						<LoadingPanel loading={loading} />
+						<OnlineToast lobby={lobby} net={net} onClose={focusGame} />
+						<CrashPanel />
+						{controlsOpen && <ControlsDialog touch={touch} onClose={() => { setControlsOpen(false); focusGame(); }} />}
+						{barFloating && !barOpen && (
+							<button type="button" className="bar-toggle" onClick={() => setBarOpen(true)}
+								aria-label="Show the bar" aria-expanded={false}>
+								<MoreIcon />
+							</button>
+						)}
+						{homeScreenHint && <HomeScreenHint landscape={landscape} onClose={() => { setHomeScreenHint(false); focusGame(); }} />}
+						{!chatDocked && chatOpen && (
+							<div className="overlay chat-drawer" onClick={(event) => event.target === event.currentTarget && closeChat()}>
+								<ChatPane {...chatProps} onDone={closeChat} />
+								<button type="button" className="toast-close chat-drawer-close" onClick={closeChat}
+									aria-label="Close the chat">×</button>
+							</div>
+						)}
+					</div>
+					{/* (the upright Home Screen hint points past the bar at Safari's: the bar goes meanwhile) */}
+					<div className={`bar${barFloating ? " bar-floating" : ""}`} hidden={barHidden || (homeScreenHint && !landscape)}>
+						<span className="status">{status}</span>
+						<NetStatus net={net} />
+						<SaveLogButton />
+						{!chatDocked && (
+							<button type="button" className="bar-button bar-chat" onClick={() => setChatOpen(!chatOpen)}
+								aria-label="Lobby chat" aria-expanded={chatOpen}
+								title={online !== null ? `Lobby chat: ${online.toLocaleString()} online` : "Lobby chat"}>
+								<ChatIcon />
+								{online !== null && <span className="bar-chat-count">{online.toLocaleString()}</span>}
+							</button>
+						)}
+						<VolumeControl volume={volume} onChange={changeVolume} onDone={focusGame} />
+						<button type="button" className="bar-button" onClick={() => setControlsOpen(!controlsOpen)}
+							aria-label="Controls" aria-expanded={controlsOpen} title="Controls">
+							<ControlsIcon />
+						</button>
+						{!standalone && (
+							<button type="button" className="bar-button" onClick={toggleFullscreen}
+								aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
+								title={fullscreen ? "Exit fullscreen (F11, or hold Esc)" : "Fullscreen (F11): the game takes every key"}>
+								{fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
+							</button>
+						)}
+					</div>
 				</div>
-				<div className="bar">
-					<span className="status">{status}</span>
-					<NetStatus net={net} />
-					<SaveLogButton />
-					<VolumeControl volume={volume} onChange={changeVolume} onDone={focusGame} />
-					<button type="button" className="bar-button" onClick={() => setControlsOpen(!controlsOpen)}
-						aria-label="Controls" aria-expanded={controlsOpen} title="Controls">
-						<ControlsIcon />
-					</button>
-					<button type="button" className="bar-button" onClick={toggleFullscreen}
-						aria-label={fullscreen ? "Exit fullscreen" : "Fullscreen"}
-						title={fullscreen ? "Exit fullscreen (F11, or hold Esc)" : "Fullscreen (F11): the game takes every key"}>
-						{fullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
-					</button>
-				</div>
+				{chatDocked && <ChatPane {...chatProps} onDone={focusGame} />}
 			</div>
 		</main>
 	);
+}
+
+/* how long a status shows the hidden bar (ms) */
+const STATUS_SHOW_MS = 6000;
+
+/* where the chat is docked beside the game: a wide window whose pointer is
+not a finger (styles.css's --chat-width agrees) */
+const CHAT_DOCKED_QUERY = "(min-width: 901px) and (not (pointer: coarse))";
+
+/* whether a media query matches, as the window changes */
+function useMediaQuery(query) {
+	const [matches, setMatches] = useState(() => matchMedia(query).matches);
+
+	useEffect(() => {
+		const list = matchMedia(query);
+		const update = () => setMatches(list.matches);
+		update();
+		list.addEventListener("change", update);
+		return () => list.removeEventListener("change", update);
+	}, [query]);
+	return matches;
 }
 
 /* Over the game while it waits for its data, and draws nothing new: as it
@@ -302,6 +450,85 @@ function OwnershipNotice({ denied, onAnswer }) {
 	);
 }
 
+/* Instead of the game, where the browser cannot run it (game.js's
+browserSupport): what to do about it, by platform. */
+function UnsupportedPanel({ reason }) {
+	return (
+		<div className="overlay" role="alert">
+			<div className="panel">
+				<h2 className="panel-title">{reason.title}</h2>
+				<p className="panel-hint">{reason.text}</p>
+			</div>
+		</div>
+	);
+}
+
+/* An iPhone's fullscreen button: Safari has no fullscreen for pages; the
+Home Screen is the way. Sideways, Safari hides its bar, so the phone goes
+upright first. Upright, Share is behind the menu button at the left end of
+the address bar: every iPhone that runs the game has iOS 27 (JSPI), whose
+Safari has that compact bar unless the player chose another layout (Safari's
+user agent does not tell the version), and a pointer at the bottom shows
+where the button is. */
+function HomeScreenHint({ landscape, onClose }) {
+	return (
+		<div className={`overlay home-hint${landscape ? "" : " home-hint-upright"}`} role="dialog" aria-modal="true"
+			aria-labelledby="home-screen-title" onClick={(event) => event.target === event.currentTarget && onClose()}>
+			<div className="panel">
+				<div className="panel-header">
+					<h2 id="home-screen-title" className="panel-title">Full screen on an iPhone</h2>
+					<button type="button" className="toast-close" onClick={onClose} aria-label="Close" autoFocus>×</button>
+				</div>
+				{landscape ? (
+					<>
+						<p className="panel-hint">
+							Safari gives pages no full screen. For the whole screen, add this page to your Home Screen
+							and play from that icon.
+						</p>
+						<p className="panel-hint home-hint-step">
+							<RotateIcon />
+							<span><strong>Turn your phone upright first.</strong> Sideways, Safari hides its bar, and
+							the Share button with it.</span>
+						</p>
+					</>
+				) : (
+					<>
+						<ol className="panel-hint home-hint-steps">
+							<li>At the bottom of Safari, tap the <strong>menu button</strong> at the left end of the
+								address bar.</li>
+							<li>Tap <strong>Share</strong>.</li>
+							<li>Scroll down and tap <strong>Add to Home Screen</strong>, then play from that icon.</li>
+						</ol>
+						<p className="panel-hint home-hint-note">
+							With Safari's "Bottom" or "Top" layout, tap its Share button instead, the box with an arrow.
+						</p>
+					</>
+				)}
+			</div>
+			{!landscape && (
+				<div className="home-hint-pointer" aria-hidden="true">
+					<span className="home-hint-pointer-label">Menu</span>
+					<svg viewBox="0 0 24 24" width="28" height="28">
+						<path d="M12 4v14M6 12l6 7 6-7" fill="none" stroke="currentColor" strokeWidth="2.5"
+							strokeLinecap="round" strokeLinejoin="round" />
+					</svg>
+				</div>
+			)}
+		</div>
+	);
+}
+
+/* a phone held upright: the game is played sideways (styles.css shows it in
+portrait only) */
+function RotateHint() {
+	return (
+		<div className="rotate-hint" role="status">
+			<RotateIcon />
+			<span>Turn your phone sideways to play</span>
+		</div>
+	);
+}
+
 /* the mouse is the page's while a panel shows over the game (a locked
 pointer sends every click to the game) */
 function useReleasedPointer(active) {
@@ -344,6 +571,16 @@ const MENU_CONTROLS = [
 	["Scroll", ["Wheel"]],
 ];
 
+/* the touch controls (TouchControls.jsx) */
+const TOUCH_CONTROLS = [
+	["Move", ["Stick"]],
+	["Aim", ["Drag the picture"]],
+	["Fire, grenade, jump, melee…", ["Buttons"]],
+	["Pause menu, scoreboard", ["Top buttons"]],
+	["Menus: choose", ["Tap", "D-pad"]],
+	["Menus: back", ["B"]],
+];
+
 const PAGE_CONTROLS = [
 	["Aim with the mouse", ["Click the game"]],
 	["Free the mouse", ["Esc"]],
@@ -353,7 +590,7 @@ const PAGE_CONTROLS = [
 	["Developer console", ["`"]],
 ];
 
-function ControlsDialog({ onClose }) {
+function ControlsDialog({ touch, onClose }) {
 	useReleasedPointer(true);
 
 	return (
@@ -373,7 +610,10 @@ function ControlsDialog({ onClose }) {
 					<button type="button" className="toast-close" onClick={onClose} aria-label="Close" autoFocus>×</button>
 				</div>
 				<div className="controls">
-					<ControlsSection title="Playing" controls={PLAYING_CONTROLS} />
+					<div className="controls-column">
+						{touch && <ControlsSection title="Touch" controls={TOUCH_CONTROLS} />}
+						<ControlsSection title="Playing" controls={PLAYING_CONTROLS} />
+					</div>
 					<div className="controls-column">
 						<ControlsSection title="Menus" controls={MENU_CONTROLS} />
 						<ControlsSection title="In the browser" controls={PAGE_CONTROLS} />
@@ -514,6 +754,33 @@ function VolumeIcon({ volume }) {
 				<path d="M15.5 9.5l5 5M20.5 9.5l-5 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /> :
 				<path d={volume < 50 ? "M15 9.5a3.5 3.5 0 0 1 0 5" : "M15 9.5a3.5 3.5 0 0 1 0 5M17.5 6.5a7.5 7.5 0 0 1 0 11"}
 					fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />}
+		</svg>
+	);
+}
+
+function MoreIcon() {
+	return (
+		<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+			<circle cx="6" cy="12" r="1.8" fill="currentColor" />
+			<circle cx="12" cy="12" r="1.8" fill="currentColor" />
+			<circle cx="18" cy="12" r="1.8" fill="currentColor" />
+		</svg>
+	);
+}
+
+function ChatIcon() {
+	return (
+		<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+			<path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+		</svg>
+	);
+}
+
+function RotateIcon() {
+	return (
+		<svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true">
+			<rect x="7" y="3" width="10" height="18" rx="2" fill="none" stroke="currentColor" strokeWidth="2" />
+			<path d="M20 9a8 8 0 0 0-3-5M4 15a8 8 0 0 0 3 5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
 		</svg>
 	);
 }

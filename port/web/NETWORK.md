@@ -26,6 +26,8 @@ Status:
 - To do: remove the Worker's rooms, once the pages have moved to the
   signalling's server and it has run a while (refer to "Removing the
   Worker's rooms").
+- To do, perhaps: the lobby's chat kept in a Postgres database, so that its
+  history outlasts a restart of the server (refer to "The lobby's chat").
 
 ## Parts
 
@@ -545,6 +547,70 @@ its own, and runs against the Worker's rooms too (`SERVER=worker`), so that
 the two stay the same to a page, and against Fly.io's image
 (`SERVER=machine`).
 
+### The online count
+
+The lobby's chat (to the game's right; "The lobby's chat") shows how many
+browsers have the site open (`app/src/online.js`). Only this server has
+it: the Worker's rooms do not, and a page without it shows no count, and a
+chat that waits.
+
+- **A WebSocket for each page**, `/net/online?visitor=<id>`, open as long as
+  the page is (`Signalling.Online`; the relay passes it on, as
+  `/net/rooms/`). `visitor` is the browser's, in `localStorage`
+  (`halo-visitor-v1`): a browser's tabs are one. Server to page:
+  `{"type": "online", "count": n}`, as it connects and as the count
+  changes; the page pings every 30 seconds.
+- **Phoenix's Presence** (`Signalling.Presence`, without Phoenix's Endpoint
+  or Channels) tracks each WebSocket by its visitor; its `handle_metas`
+  gives the count (the topic's keys) to `Signalling.OnlineCount`, which
+  tells the pages at most every 2 seconds, and only when it changed: one
+  message for each page, not one for each page that comes or goes.
+- **Limits.** They are among an address's 32 pages, and at most 400 at once
+  (`SIGNALLING_ONLINE_AT_ONCE`), so that the rooms' pages keep the rest of
+  the server's 800. A page refused, or whose WebSocket closes, shows no
+  count and tries again, after 1 to 2 seconds, then longer, at random, so
+  that after a restart the pages do not all come back at once. A tab hidden
+  for 5 minutes lets go of its WebSocket until it is shown again.
+
+### The lobby's chat
+
+A pane to the game's right (`app/src/Chat.jsx`), as tall as it: every page
+with the site open, over the online count's WebSocket (`Signalling.Chat`).
+Not where the window is narrower than 900 pixels, nor on phones and
+tablets (the game takes the whole window).
+
+- **Messages.** Page to server: `{"type": "name", "name"}` (as it connects,
+  and when the name changes) and `{"type": "chat", "text"}`. Server to
+  page: `{"type": "history", "messages"}` as it connects (the last 50, in
+  memory: a restart forgets them), then `{"type": "chat", "id", "name",
+  "color", "text", "at"}` for each, and `{"type": "error", "code": "busy"}`
+  for a message refused. A name is at most 11 characters, a message 200;
+  control characters are spaces. An address says at most 20 a minute.
+- **The history** is the `Signalling.Chat` process's state (an Erlang
+  `:queue`, not ETS): the last 50 messages, in memory only. A deploy, a
+  crash or `fly_start.sh`'s restart forgets them, and the ids start again
+  at 1 (the pages then drop what they had: `online.js`). To do, perhaps:
+  keep them in a Postgres database (Fly's, or one hosted elsewhere), so
+  that the history outlasts a restart and can be longer; the process would
+  still give each message its id and tell the pages, and write each to the
+  database as it does.
+- **The name** is the player's Halo profile's (`app/src/profile.js`): the
+  page reads the saves the browser keeps (OPFS, `web_main.c`'s
+  `mount_saves`): of `u/UDATA`'s profiles (a folder with a `blam.sav`,
+  whose first 24 bytes are the name, UTF-16LE), the one the game last
+  played as (`z/lastprof.txt`), else the first by folder name; none, and
+  `New001`. It looks again every 15 seconds, for a profile made or chosen.
+- **The colour** is one of a multiplayer game's 18 (`player_profile.c`'s
+  `profile_color_table`), the server's, by a hash of the visitor id: the
+  same at every visit, and a page cannot choose another's. Each name is a
+  chip of its colour, so that black, blue and sage read on the pane.
+- **Keys.** The chat's keys are its own (the game takes the window's: the
+  pane stops them, as the panels over the game do); Esc gives the keyboard
+  back to the game.
+
+Locally: the server (`mix run --no-halt`), `npm run dev`, and the page at
+`http://localhost:8787/?signalling=http://localhost:8791`.
+
 ### The machine
 
 One Fly.io machine (`fly.toml`, `Dockerfile`: `fly deploy` in `port/web`)
@@ -580,6 +646,50 @@ to its page stayed under 4 ms. At the usual priority it was much the same
 round trip, before any load, was 87 ms: not explained.) Not measured on
 Fly.io, where a shared CPU that is used steadily is throttled, the relay
 with it: watch the machine's CPU after the pages move here.
+
+### The connection limits
+
+`fly.toml`'s `[services.concurrency]` is how many TCP connections Fly's
+proxy sends the machine on port 8790: past `soft_limit` it counts the
+machine as busy (with one machine, nothing changes), past `hard_limit` it
+sends none, and a new one fails at Fly's edge. Fly's own are 20 and 25, for
+short requests: here every connection is a WebSocket kept for a whole game.
+
+Why 1200: the sum of what the two servers behind the port take, the relay's
+400 sessions (`maximumSessions`, `relay/main.go`; in practice 96, one UDP
+port each) and the signalling's 800 pages (4 acceptors of 200,
+`application.ex`). It is one count for both: Fly cannot tell a native
+game's WebSocket from a room's, so a crowd of either is refused the other's
+room too. `soft_limit` is a little under it (1000). (Before the signalling
+came, 300 and 400: the relay alone.)
+
+Fly sets no ceiling that matters here: what holds the number down is the
+machine. Raise it only when all of these hold, and raise the servers' own
+limits with it (Fly's alone changes nothing: the servers refuse at theirs):
+
+1. **Memory.** Measured, not guessed: the memory one more connection costs,
+   in the relay (a proxied one is two goroutines and a second socket) and in
+   the signalling, on the image (`docker`, as above). At the new
+   `hard_limit`, with 96 native sessions, the machine's servers use at most
+   three quarters of its memory (now 1 GB; `[[vm]] memory` is the way to
+   more). Running out ends the relay, and every native game with it.
+2. **The servers' own limits** raised to match: the signalling's acceptors
+   (`application.ex`), and `hard_limit` again their sum with the relay's
+   sessions; `soft_limit` about five sixths of it.
+3. **File descriptors.** A WebSocket the relay passes to the signalling
+   holds three (the page's, the relay's to the signalling, the
+   signalling's): the machine's `ulimit -n` (`fly ssh console`) is above
+   three times `hard_limit`, with room to spare.
+4. **The relay first.** With the new number of WebSockets reconnecting at
+   once (as after a deploy), a native game's page's round trip through the
+   relay stays where it was measured above (under 4 ms), and the machine's
+   CPU within its allowance (`fly.toml`'s `[[vm]]`).
+5. **A kind of connection that only waits** (a page's count of who is
+   online, say) has a limit of its own, lower, so that it never takes the
+   room that games' WebSockets need.
+
+Then deploy when few play (it ends native games), and watch the machine's
+memory and CPU (refer to the Fly metrics) the first evenings.
 
 ### Moving the pages to it
 

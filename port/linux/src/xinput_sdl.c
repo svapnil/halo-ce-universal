@@ -610,16 +610,30 @@ static void wheel_update(void)
 
 /* ---------- SDL gamepads */
 
+/* a virtual gamepad (the browser's touch controls: port/web/src/web_touch.c)
+is port 0's with the keyboard, as the first real gamepad is, and never a
+port of its own; NULL without one */
+static SDL_Gamepad *virtual_gamepad;
+
 /* the SDL gamepads in connection order, at most one per port */
 static int sdl_gamepads(SDL_Gamepad *gamepads[PORT_COUNT])
 {
 	SDL_JoystickID *ids;
-	int count = 0, index, found = 0;
+	int count = 0, index, found = 0, real = 0;
 
 	memset(gamepads, 0, sizeof(SDL_Gamepad *) * PORT_COUNT);
+	virtual_gamepad = NULL;
 	ids = SDL_GetGamepads(&count);
 	if (!ids)
 		return 0;
+	for (index = 0; index < count; index++)
+	{
+		if (SDL_IsJoystickVirtual(ids[index]))
+			virtual_gamepad = SDL_GetGamepadFromID(ids[index]);
+		else
+			ids[real++] = ids[index];
+	}
+	count = real;
 #ifdef HALO_ANDROID
 	{
 		/* Android can list input devices with a few gamepad buttons (the
@@ -879,6 +893,8 @@ DWORD WINAPI XInputGetState(HANDLE device, PXINPUT_STATE state)
 			else
 				keyboard_controls(&input, &state->Gamepad);
 		}
+		if (virtual_gamepad)
+			sdl_gamepad_state(virtual_gamepad, &state->Gamepad);
 		if (port_gamepad(gamepads, count, 0))
 			sdl_gamepad_state(gamepads[0], &state->Gamepad);
 		test_input_gamepad(&state->Gamepad);

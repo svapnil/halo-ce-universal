@@ -62,7 +62,8 @@ Settings (the environment):
 	RELAY_REPORT=1        logs each session's numbers every 5 seconds
 	RELAY_SIGNALLING      where the browsers' signalling is, host:port
 	                      (port/web/signalling, on this machine): /net/rooms/
-	                      goes there, so that the two share an address
+	                      and /net/online go there, so that the two share an
+	                      address
 */
 package main
 
@@ -1122,8 +1123,11 @@ func main() {
 	mux.HandleFunc("GET /{$}", serveRelay)
 	if signalling != "" {
 		// the rooms' WebSockets, as they are: a few messages for each join,
-		// and none of a game's traffic
-		mux.Handle("/net/rooms/", httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: signalling}))
+		// and none of a game's traffic; and the online count's, a ping every
+		// 30 seconds and a count every few
+		proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: signalling})
+		mux.Handle("/net/rooms/", proxy)
+		mux.Handle("/net/online", proxy)
 	}
 
 	note := ""

@@ -1351,7 +1351,9 @@ HRESULT WINAPI Direct3D_CreateDevice(UINT adapter, D3DDEVTYPE device_type, void 
 
 /* ---------- the menus' pointer */
 
-#ifdef HALO_ANDROID
+/* (Android has no pointer; the browser, whose renderer is Android's, has
+the mouse's and a finger's: sdl_platform.c) */
+#if defined(HALO_ANDROID) && !defined(__EMSCRIPTEN__)
 int halo_ui_pointer_update(int menus_active, struct halo_ui_pointer *pointer)
 {
 	(void)pointer;

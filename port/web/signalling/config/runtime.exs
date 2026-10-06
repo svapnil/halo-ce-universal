@@ -9,6 +9,7 @@ config :signalling,
   origins: list.(System.get_env("SIGNALLING_ORIGINS", "")),
   answer_timeout: String.to_integer(System.get_env("SIGNALLING_ANSWER_TIMEOUT", "30000")),
   pages_at_once: String.to_integer(System.get_env("SIGNALLING_PAGES_AT_ONCE", "32")),
+  online_at_once: String.to_integer(System.get_env("SIGNALLING_ONLINE_AT_ONCE", "400")),
   sfu: [
     api: System.get_env("SFU_API", "https://rtc.live.cloudflare.com/v1"),
     app_id: System.get_env("REALTIME_APP_ID", ""),

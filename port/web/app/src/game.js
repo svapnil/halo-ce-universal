@@ -21,6 +21,31 @@ import { tabTransport } from "./tab_transport.js";
 
 let started = false;
 
+/* Why this browser cannot run the game ({ title, text }), or null where it
+can. The game suspends each frame (JSPI: sdl_platform.c's
+web_wait_for_frame), which Chrome 137, Firefox 153, Safari 27 and iOS 27
+have; before them, halo.js threw at its first line (launch day: 400 such
+reports, most from Safari 26 and iOS 26). An iPhone's or iPad's browsers
+are all Safari's engine: the system's update is the way. */
+export function browserSupport() {
+	if (typeof WebAssembly.Suspending === "function") {
+		return null;
+	}
+	const agent = navigator.userAgent;
+	/* (an iPad asks for desktop pages, as a Mac with a touch screen) */
+	const apple = /iPhone|iPad|iPod/.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1);
+	if (apple) {
+		return { title: "This game needs iOS 27 or later",
+			text: "Update your iPhone or iPad in Settings > General > Software Update, then come back in any browser." };
+	}
+	if (/Android/.test(agent)) {
+		return { title: "This game needs Chrome 137 or later",
+			text: "Update Chrome in the Play Store, then come back." };
+	}
+	return { title: "This browser cannot run the game yet",
+		text: "It needs Chrome 137, Edge 137, Firefox 153 or Safari 27, or later." };
+}
+
 /* a desktop build's invite (halo://join/...) the page was opened with
 (#native=<invite>), or null */
 function nativeInvite() {
@@ -87,12 +112,11 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 		onStatus("This page needs cross-origin isolation (COOP and COEP headers): serve it with `npm run dev` (port/web/README.md).");
 		return;
 	}
-	/* the game suspends each frame (JSPI: sdl_platform.c's web_wait_for_frame),
-	which Chrome 137, Firefox 153, Safari 27 and iOS 27 have; before them,
-	halo.js threw at its first line (launch day: 400 such reports, most from
-	Safari 26 and iOS 26) */
-	if (typeof WebAssembly.Suspending !== "function") {
-		onStatus("This browser cannot run the game yet. It needs Chrome 137, Firefox 153, Safari 27 or iOS 27, or later.");
+	/* (App.jsx shows the panel instead of the game; this is for a page
+	that starts the game anyway) */
+	const unsupported = browserSupport();
+	if (unsupported) {
+		onStatus(`${unsupported.title}. ${unsupported.text}`);
 		return;
 	}
 	const loading = startLoading(onLoading);

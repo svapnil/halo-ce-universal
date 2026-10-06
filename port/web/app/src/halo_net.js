@@ -49,8 +49,8 @@ export function parseInvite(text) {
 
 /* where the signalling is: ?signalling=<URL>, or what the site's Worker says
 (GET /net/signalling: the server of port/web/signalling), or the Worker
-itself (its own rooms, worker/rooms.js) */
-async function signallingAddress() {
+itself (its own rooms, worker/rooms.js); the online count's too (online.js) */
+export async function signallingAddress() {
 	const given = new URLSearchParams(location.search).get("signalling");
 	if (given) {
 		return given;

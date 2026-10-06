@@ -1,10 +1,11 @@
 # /net/rooms/new (host) and /net/rooms/<room> (join), as the Worker's
-# handleRooms (worker/rooms.js); and /healthz.
+# handleRooms (worker/rooms.js); /net/online, the online count and the
+# lobby's chat; and /healthz.
 defmodule Signalling.Router do
   @moduledoc false
   use Plug.Router
 
-  alias Signalling.{Limits, Page, Room}
+  alias Signalling.{Limits, Online, Page, Room}
 
   # the page pings every 30 seconds (NETWORK.md, "Signalling messages"): one
   # that has sent nothing for this long is gone
@@ -42,6 +43,30 @@ defmodule Signalling.Router do
 
         conn
         |> WebSockAdapter.upgrade(Page, page, timeout: @silence, max_frame_size: @maximum_message)
+        |> halt()
+    end
+  end
+
+  # the page's browser's visitor id (online.js): ?visitor=<id>
+  get "/net/online" do
+    conn = fetch_query_params(conn)
+    visitor = conn.query_params["visitor"]
+
+    cond do
+      not upgrade?(conn) ->
+        send_resp(conn, 426, "Expected a WebSocket")
+
+      not origin_allowed?(conn) ->
+        send_resp(conn, 403, "Forbidden")
+
+      not (is_binary(visitor) and visitor =~ ~r/^[0-9A-Za-z_-]{16,64}$/) ->
+        send_resp(conn, 400, "Expected a visitor")
+
+      true ->
+        page = %{visitor: visitor, address: address(conn)}
+
+        conn
+        |> WebSockAdapter.upgrade(Online, page, timeout: @silence, max_frame_size: 0x1000)
         |> halt()
     end
   end

@@ -10,7 +10,25 @@
 	canvas's shape at the canvas's pixels (sdl_platform.c's
 	platform_screen_mode), so this is the picture's shape and its
 	resolution too. */
-	--screen-width: min(calc(100vw - 32px), calc((100vh - var(--bar-height) - 48px) * 16 / 9));
+	--screen-width: min(calc(100vw - 32px - var(--chat-width) - var(--chat-gap)),
+		calc((100vh - var(--bar-height) - 48px) * 16 / 9));
+	/* the lobby's chat, to the box's right (Chat.jsx): none where the window
+	has no room for it */
+	--chat-width: 300px;
+	--chat-gap: 12px;
+}
+
+/* (a narrow window, or a finger's: the chat is over the game instead, from
+the bar's button: App.jsx's CHAT_DOCKED_QUERY) */
+@media (max-width: 900px), (pointer: coarse) {
+	:root {
+		--chat-width: 0px;
+		--chat-gap: 0px;
+	}
+
+	.layout > .chat {
+		display: none;
+	}
 }
 
 html, body, #root {
@@ -29,6 +47,12 @@ body {
 	display: grid;
 	place-items: center;
 	height: 100%;
+}
+
+/* the box and, to its right, the lobby's chat, as tall as it */
+.layout {
+	display: flex;
+	gap: var(--chat-gap);
 }
 
 .console {
@@ -474,5 +498,581 @@ kbd {
 	.controls {
 		grid-template-columns: 1fr;
 		gap: 16px;
+	}
+}
+
+/* A phone or a tablet (its pointer is a finger): the box is the whole
+window, the picture what is left above the bar, under the rounded corners
+and the notch (viewport-fit=cover, index.html). The game draws the picture's
+shape, 4:3 at the narrowest, and bars the rest. */
+@media (pointer: coarse) {
+	.page {
+		place-items: stretch;
+	}
+
+	/* (the box is the whole window: the chat is over the game) */
+	.layout {
+		display: contents;
+	}
+
+	.console {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		width: auto;
+		height: 100%;
+		border: 0;
+		border-radius: 0;
+		box-shadow: none;
+	}
+
+	.screen {
+		flex: 1;
+		min-height: 0;
+		aspect-ratio: auto;
+	}
+
+	.bar {
+		flex: none;
+		height: auto;
+		min-height: var(--bar-height);
+		padding-right: max(6px, env(safe-area-inset-right));
+		padding-bottom: env(safe-area-inset-bottom);
+		padding-left: max(12px, env(safe-area-inset-left));
+	}
+}
+
+/* the game is played sideways: upright, a word over the picture */
+.rotate-hint {
+	display: none;
+}
+
+@media (pointer: coarse) and (orientation: portrait) {
+	.rotate-hint {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 12px;
+		background: rgb(5 7 10 / 0.72);
+		color: var(--text-strong);
+		font-size: 15px;
+		text-align: center;
+		pointer-events: none;
+	}
+}
+
+/* The touch controls (TouchControls.jsx), over the picture: the stick at
+the bottom left, the buttons at the bottom right and the top, the picture
+between them the aim's. The layer itself lets touches through to the
+canvas; the controls take theirs. */
+.touch {
+	position: absolute;
+	inset: 0;
+	padding: max(10px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+		max(10px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+	box-sizing: border-box;
+	pointer-events: none;
+	touch-action: none;
+	user-select: none;
+	-webkit-user-select: none;
+	-webkit-touch-callout: none;
+}
+
+.touch-button,
+.touch-stick {
+	pointer-events: auto;
+	touch-action: none;
+}
+
+.touch-button {
+	position: absolute;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	width: 56px;
+	height: 56px;
+	border: 1px solid rgb(255 255 255 / 0.35);
+	border-radius: 50%;
+	background: rgb(10 12 16 / 0.45);
+	color: rgb(255 255 255 / 0.85);
+	font-size: 12px;
+	font-weight: 600;
+	line-height: 1.1;
+	text-transform: uppercase;
+	letter-spacing: 0.02em;
+}
+
+.touch-button.touch-down {
+	background: rgb(255 255 255 / 0.4);
+	color: #000;
+}
+
+.touch-sub {
+	font-size: 9px;
+	font-weight: 400;
+	opacity: 0.75;
+	text-transform: none;
+}
+
+.touch-small {
+	width: 46px;
+	height: 46px;
+	font-size: 10px;
+}
+
+/* the pause menu's and the scoreboard's, top centre */
+.touch-top {
+	position: absolute;
+	top: max(10px, env(safe-area-inset-top));
+	left: 50%;
+	display: flex;
+	gap: 12px;
+	transform: translateX(-50%);
+}
+
+.touch-top .touch-button {
+	position: static;
+	width: 64px;
+	height: 32px;
+	border-radius: 16px;
+}
+
+/* the right hand's: fire under the thumb, the rest fanned out around it */
+.touch-right {
+	position: absolute;
+	right: max(10px, env(safe-area-inset-right));
+	bottom: max(10px, env(safe-area-inset-bottom));
+	width: 260px;
+	height: 220px;
+}
+
+.touch-fire {
+	right: 0;
+	bottom: 0;
+	width: 78px;
+	height: 78px;
+	font-size: 14px;
+	border-color: rgb(255 255 255 / 0.6);
+}
+
+.touch-grenade {
+	right: 4px;
+	bottom: 96px;
+	width: 64px;
+	height: 64px;
+	font-size: 10px;
+}
+
+.touch-jump {
+	right: 92px;
+	bottom: 0;
+}
+
+.touch-melee {
+	right: 92px;
+	bottom: 66px;
+}
+
+.touch-use {
+	right: 158px;
+	bottom: 0;
+}
+
+.touch-swap {
+	right: 158px;
+	bottom: 66px;
+}
+
+.touch-zoom {
+	right: 72px;
+	bottom: 132px;
+}
+
+.touch-crouch {
+	right: 128px;
+	bottom: 132px;
+}
+
+.touch-light {
+	right: 0;
+	bottom: 168px;
+}
+
+.touch-grenade-type {
+	right: 60px;
+	bottom: 180px;
+}
+
+/* the stick: its base, and the knob the finger moves (up to STICK_TRAVEL) */
+.touch-stick {
+	position: absolute;
+	bottom: max(24px, env(safe-area-inset-bottom));
+	left: max(24px, env(safe-area-inset-left));
+	display: grid;
+	place-items: center;
+	width: 132px;
+	height: 132px;
+	border: 1px solid rgb(255 255 255 / 0.35);
+	border-radius: 50%;
+	background: rgb(10 12 16 / 0.35);
+}
+
+.touch-knob {
+	width: 56px;
+	height: 56px;
+	border-radius: 50%;
+	background: rgb(255 255 255 / 0.5);
+	transition: transform 0.05s linear;
+}
+
+.touch-stick.touch-down .touch-knob {
+	background: rgb(255 255 255 / 0.75);
+}
+
+/* the menus': the D-pad, then B and A, bottom right */
+.touch-menu {
+	position: absolute;
+	right: max(10px, env(safe-area-inset-right));
+	bottom: max(10px, env(safe-area-inset-bottom));
+	width: 300px;
+	height: 150px;
+}
+
+.touch-dpad {
+	position: absolute;
+	left: 0;
+	bottom: 0;
+	width: 150px;
+	height: 150px;
+}
+
+.touch-dpad .touch-button {
+	width: 48px;
+	height: 48px;
+	border-radius: 8px;
+	font-size: 14px;
+}
+
+.touch-dpad-up { top: 0; left: 51px; }
+.touch-dpad-left { top: 51px; left: 0; }
+.touch-dpad-right { top: 51px; left: 102px; }
+.touch-dpad-down { top: 102px; left: 51px; }
+
+.touch-b {
+	right: 72px;
+	bottom: 60px;
+	width: 60px;
+	height: 60px;
+	font-size: 16px;
+}
+
+.touch-a {
+	right: 0;
+	bottom: 10px;
+	width: 68px;
+	height: 68px;
+	font-size: 16px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.touch-knob {
+		transition: none;
+	}
+}
+
+/* The lobby's chat (Chat.jsx): to the box's right, as tall as it. Each name
+is a chip of its player's colour, as the scoreboard's rows are: the dark
+ones (black, blue, sage) read on the pane too. */
+.chat {
+	display: flex;
+	flex-direction: column;
+	width: var(--chat-width);
+	min-height: 0;
+	border: 1px solid var(--edge);
+	border-radius: 6px;
+	background: var(--frame);
+	overflow: hidden;
+	box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
+}
+
+.chat-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	height: var(--bar-height);
+	padding: 0 12px;
+	border-bottom: 1px solid var(--edge);
+	flex: none;
+}
+
+.chat-title {
+	margin: 0;
+	color: var(--text-strong);
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.chat-online {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
+
+.chat-offline {
+	opacity: 0.7;
+}
+
+.online-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: #3fb950;
+	box-shadow: 0 0 6px rgb(63 185 80 / 0.6);
+}
+
+.chat-messages {
+	flex: 1;
+	min-height: 0;
+	margin: 0;
+	padding: 8px 12px;
+	overflow-y: auto;
+	list-style: none;
+	overscroll-behavior: contain;
+}
+
+.chat-message {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 2px 6px;
+	padding: 4px 0;
+	overflow-wrap: anywhere;
+}
+
+.chat-empty {
+	padding: 8px 0;
+	opacity: 0.7;
+}
+
+.chat-name {
+	padding: 0 5px;
+	border-radius: 3px;
+	background: currentColor;
+	font-weight: 600;
+	line-height: 18px;
+	white-space: nowrap;
+}
+
+/* (the chip's text: dark on the light colours, light on the dark ones) */
+.chat-name-text {
+	color: #0b0d10;
+}
+
+.chat-name[data-dark] .chat-name-text {
+	color: #f2f4f6;
+}
+
+.chat-text {
+	flex: 1 1 auto;
+	min-width: 0;
+	color: var(--text-strong);
+}
+
+.chat-time {
+	margin-left: auto;
+	font-size: 11px;
+	opacity: 0.6;
+}
+
+.chat-notice {
+	margin: 0;
+	padding: 6px 12px;
+	border-top: 1px solid var(--edge);
+	color: #f0b45a;
+	font-size: 12px;
+}
+
+.chat-form {
+	display: flex;
+	gap: 6px;
+	padding: 8px;
+	border-top: 1px solid var(--edge);
+	flex: none;
+}
+
+.chat-input {
+	flex: 1;
+	min-width: 0;
+	padding: 6px 8px;
+	border: 1px solid var(--edge);
+	border-radius: 4px;
+	background: var(--page);
+	color: var(--text-strong);
+	font: inherit;
+}
+
+.chat-input:focus-visible {
+	outline: 2px solid #6493ed;
+	outline-offset: -1px;
+}
+
+.chat-send {
+	flex: none;
+}
+
+.chat-send:disabled {
+	opacity: 0.5;
+	cursor: default;
+}
+
+.chat-send:disabled:hover {
+	background: var(--text-strong);
+}
+
+/* The chat over the game (App.jsx: where it is not docked beside it): a
+drawer on the right, as tall as the picture, the dimmed game behind. Its
+input is 16px on purpose: a phone zooms in on a smaller one. */
+.bar-chat {
+	width: auto;
+	gap: 6px;
+	padding: 0 8px;
+}
+
+.bar-chat-count {
+	font-size: 12px;
+	font-variant-numeric: tabular-nums;
+}
+
+.chat-drawer {
+	justify-items: end;
+	padding: 0;
+}
+
+.chat-drawer .chat {
+	display: flex;
+	width: min(360px, 100%);
+	height: 100%;
+	border-width: 0 0 0 1px;
+	border-radius: 0;
+	box-shadow: -12px 0 40px rgb(0 0 0 / 0.5);
+}
+
+.chat-drawer .chat-header {
+	padding-right: 40px;
+}
+
+.chat-drawer .chat-input {
+	font-size: 16px;
+}
+
+.chat-drawer-close {
+	position: absolute;
+	top: 7px;
+	right: 7px;
+}
+
+@media (pointer: coarse) {
+	.chat-drawer .chat {
+		padding-right: env(safe-area-inset-right);
+		padding-bottom: env(safe-area-inset-bottom);
+	}
+}
+
+/* A phone sideways (App.jsx's barFloating): the bar is over the bottom of
+the picture when shown, and hidden otherwise behind the corner's button */
+.bar-floating {
+	position: absolute;
+	right: 0;
+	bottom: 0;
+	left: 0;
+	z-index: 2;
+	background: rgb(21 24 29 / 0.94);
+}
+
+.bar[hidden] {
+	display: none;
+}
+
+.bar-toggle {
+	position: absolute;
+	top: max(8px, env(safe-area-inset-top));
+	left: max(8px, env(safe-area-inset-left));
+	display: grid;
+	place-items: center;
+	width: 32px;
+	height: 32px;
+	padding: 0;
+	border: 1px solid rgb(255 255 255 / 0.35);
+	border-radius: 50%;
+	background: rgb(10 12 16 / 0.45);
+	color: rgb(255 255 255 / 0.85);
+	touch-action: none;
+}
+
+/* The Home Screen hint (App.jsx's HomeScreenHint): upright, the panel sits
+low, over the pointer at the bottom edge, which points at Safari's bar below
+the page: the menu button at the left end of the address bar (iOS 26's
+compact layout), or the Share button in the middle (the older layouts) */
+.home-hint-upright {
+	align-items: end;
+	padding-bottom: 72px;
+}
+
+.home-hint-step {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+}
+
+.home-hint-step svg {
+	flex: none;
+	color: var(--text-strong);
+}
+
+.home-hint-steps {
+	margin: 0;
+	padding-left: 20px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.home-hint-note {
+	font-size: 12px;
+	opacity: 0.8;
+}
+
+/* (the menu button: at the left end of the address bar, about a third of
+the way across) */
+.home-hint-pointer {
+	position: absolute;
+	bottom: 6px;
+	left: 29%;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	color: var(--text-strong);
+	font-size: 12px;
+	font-weight: 600;
+	transform: translateX(-50%);
+	animation: home-hint-bounce 1s ease-in-out infinite alternate;
+}
+
+@keyframes home-hint-bounce {
+	from { transform: translate(-50%, -6px); }
+	to { transform: translate(-50%, 2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.home-hint-pointer {
+		animation: none;
 	}
 }

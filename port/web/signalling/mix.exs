@@ -20,7 +20,11 @@ defmodule Signalling.MixProject do
     [
       {:bandit, "~> 1.6"},
       {:websock_adapter, "~> 0.5"},
-      {:req, "~> 0.5"}
+      {:req, "~> 0.5"},
+      # the online count (Signalling.Presence): Phoenix's Presence, without
+      # its Endpoint or Channels
+      {:phoenix, "~> 1.7"},
+      {:phoenix_pubsub, "~> 2.1"}
     ]
   end
 end

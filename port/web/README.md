@@ -14,8 +14,9 @@ the menu has been tried.
 - Python, and ninja.
 - [Node.js](https://nodejs.org/) 20 or later, for the server (Cloudflare's
   `wrangler`, which `npm install` installs).
-- A browser with WebGL 2 and JavaScript Promise Integration (JSPI), for
-  example Chrome 137 or later.
+- A browser with WebGL 2 and JavaScript Promise Integration (JSPI): Chrome
+  137, Firefox 153, Safari 27 or iOS 27, or later. In an older one the page
+  says so (`game.js`'s `browserSupport`) instead of starting the game.
 - An Xbox disc image of the game (`.xiso` or `.iso`), as for the other ports.
 
 ## Build and run
@@ -104,6 +105,26 @@ does not show it. A map that is still coming is not a game that hangs
 The page asks the player to confirm they own the original game before the
 game loads (`App.jsx`). A Confirm is kept in the browser's `localStorage`,
 so it is asked once; a Deny is not kept, and the game does not load.
+
+Phones and tablets: on a device whose pointer is a finger (or from the
+first touch on another) the page fills the window and shows touch controls
+over the picture (`app/src/TouchControls.jsx`): a stick to move with, the
+Xbox controller's buttons, and the pause menu's and the scoreboard's; the
+picture between them is the aim, which a finger dragged on it turns. In the
+menus a tap is a click, and the controls are the menus' (D-pad, A, B). The
+controls are a gamepad to the game (`src/web_touch.c`: an SDL virtual
+gamepad, which `xinput_sdl.c` takes up with the keyboard as port 0's), so
+Settings > Controls Setup changes what the buttons do, as a real
+controller's. The finger on the canvas is SDL's finger events, which
+`sdl_platform.c` takes as the menus' pointer and as the mouse's motion (so
+`input.mouse_sensitivity` applies). The game is played sideways: upright,
+the page says to turn the phone. Sideways, the page's bar is hidden behind
+the button in the top left corner (a status to read shows it for a while),
+and the chat is a drawer over the picture, from the bar's button. iPhones
+have no fullscreen for pages and no pointer lock: the fullscreen button
+explains "Add to Home Screen" (the site's manifest and `index.html`'s Apple
+tags make the page a standalone app there), and from the Home Screen the
+button is gone.
 
 ## Design
 

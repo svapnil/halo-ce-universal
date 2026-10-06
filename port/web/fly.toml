@@ -56,7 +56,9 @@ primary_region = "iad"
 
 # the pages' WebSockets (TLS at Fly's edge), the relay's and the
 # signalling's, and /healthz. As many as the two take: the relay's 400
-# sessions (main.go) and the signalling's 800 pages (application.ex)
+# sessions (main.go) and the signalling's 800 pages (application.ex). Why,
+# and what must hold before they go higher: NETWORK.md, "The connection
+# limits"
 [[services]]
   internal_port = 8790
   protocol = "tcp"

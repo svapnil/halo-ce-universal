@@ -109,8 +109,11 @@ BOOL platform_sdl_initialize(void)
 	instead of closing the activity */
 	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 	SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
-	/* touching the screen must not aim or fire (the mouse drives the
-	controller emulation in xinput_sdl.c) */
+#endif
+#if defined(HALO_ANDROID) || defined(__EMSCRIPTEN__)
+	/* a finger on the screen is not the mouse (SDL would click where it
+	lands, and fire): on Android it does nothing; in the browser it is the
+	menus' pointer and the aim (its finger events, platform_pump_events) */
 	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 #endif
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
@@ -928,6 +931,9 @@ EMSCRIPTEN_KEEPALIVE int web_mouse_wants_capture(void)
 {
 	return __atomic_load_n(&web_mouse_captured, __ATOMIC_ACQUIRE);
 }
+
+/* port/web/src/web_touch.c's: the page's touch controls, a gamepad */
+void web_touch_pump(int menus);
 #endif
 
 #if !defined(HALO_ANDROID) && !defined(__EMSCRIPTEN__)
@@ -1340,6 +1346,12 @@ void platform_pump_events(void)
 #ifndef HALO_ANDROID
 	updater_poll(platform_window);
 #endif
+#ifdef __EMSCRIPTEN__
+	/* the page's touch controls, before the pump: SDL takes their
+	gamepad's state up in it (and is told whether a menu is up, for the
+	controls the page shows) */
+	web_touch_pump(input_state.menus != FALSE);
+#endif
 	pthread_mutex_lock(&input_lock);
 #ifdef __EMSCRIPTEN__
 	if (__atomic_exchange_n(&web_keyboard_reset_requested, 0, __ATOMIC_ACQUIRE))
@@ -1523,6 +1535,39 @@ void platform_pump_events(void)
 		case SDL_EVENT_GAMEPAD_ADDED:
 			SDL_OpenGamepad(event.gdevice.which);
 			break;
+#ifdef __EMSCRIPTEN__
+		/* a finger on the canvas (the page's touch controls take their own
+		touches: port/web/app/src/TouchControls.jsx). In the menus a tap is
+		the pointer put where the finger lands and clicked, and the finger
+		moves it; in the game the finger's motion is the mouse's, in the
+		display's pixels, for the aim (input.mouse_sensitivity applies) */
+		case SDL_EVENT_FINGER_DOWN:
+		case SDL_EVENT_FINGER_MOTION:
+		{
+			int width, height;
+
+			if (input_state.ui_pointer)
+			{
+				SDL_GetWindowSize(platform_window, &width, &height);
+				ui_pointer.x = event.tfinger.x * width;
+				ui_pointer.y = event.tfinger.y * height;
+				ui_pointer.moved = TRUE;
+				if (event.type == SDL_EVENT_FINGER_DOWN)
+				{
+					ui_pointer.left_clicks++;
+					ui_pointer.click_x = ui_pointer.x;
+					ui_pointer.click_y = ui_pointer.y;
+				}
+			}
+			else if (event.type == SDL_EVENT_FINGER_MOTION)
+			{
+				SDL_GetWindowSizeInPixels(platform_window, &width, &height);
+				input_state.mouse_dx += event.tfinger.dx * width;
+				input_state.mouse_dy += event.tfinger.dy * height;
+			}
+			break;
+		}
+#endif
 		default:
 			break;
 		}
