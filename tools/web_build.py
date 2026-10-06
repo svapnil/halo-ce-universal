@@ -34,6 +34,8 @@ WEB_ABI_FLAGS = [flag for flag in LINUX_ABI_FLAGS if flag not in NOT_WEB_FLAGS] 
 # in for the Android host's helpers).
 GLES_RENDERER_UNITS = {
     "d3d8_gl.c", "d3d8_resources.c", "gl_functions.c", "nv2a_psh.c", "nv2a_vsh.c", "xbox_textures.c",
+    # (the anti-aliasing passes: FXAA, and MSAA's resolve)
+    "xgpu_post.c",
 }
 
 # Calls whose types do not match the function they reach: WebAssembly traps
@@ -87,6 +89,8 @@ P2P_FUNCTIONS = [
     # (the PC menus' internet games, and their server browser: p2p_lobby.c)
     "p2p_set_hosting_allowed", "p2p_invite_link", "p2p_set_hosting_public", "p2p_set_game_listing",
     "p2p_lobby_browse", "p2p_lobby_refresh", "p2p_lobby_games", "p2p_lobby_mark_failed",
+    # (a public game's password: p2p_lobby.c)
+    "p2p_set_hosting_password", "p2p_listing_unlock",
 ]
 # the platform layer's functions the browser build has its own of, renamed
 # out of the way in their units: the clipboard, which the page's main thread

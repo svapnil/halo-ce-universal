@@ -177,6 +177,11 @@ changed.
     in the 16:9 box), which costs a slow GPU the least. RESOLUTION and
     WINDOW SIZE are not shown: the page gives the display and the window
     their sizes (`video_rows_show` in `port/linux/game/menu_functions.c`).
+  - ANTI-ALIASING offers Android's choices (OFF, FXAA, MSAA 2X and 4X):
+    the renderer is Android's (`GLES_RENDERER_UNITS`, with `xgpu_post.c`'s
+    passes), which has no SMAA or supersampling, and WebGL 2 often allows
+    no more than 4 samples. The menus are otherwise the desktop's, so
+    `menu_files.c` takes Android's row for this one (`web_android_rows`).
   - each upload of streamed vertices or indices gets a buffer of its own
     (`web_upload_buffer` in `d3d8_gl.c`). In ANGLE, `bufferSubData` into a
     buffer that queued draws read copies the whole buffer first. With the

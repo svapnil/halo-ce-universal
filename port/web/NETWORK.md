@@ -195,8 +195,13 @@ build chooses it. Upstream's files change only in a few places, each in
 - `source/networking/network_server_manager.c`: a host starts its game
   alone (`server_ok_to_countdown`, `network_game_server_game_can_start`).
 - `port/linux/game/menu_functions.c`: Video Setup shows neither RESOLUTION
-  nor WINDOW SIZE (`video_rows_show`; `port/web/README.md`). Not network
-  play, but the one place the menus' code changes.
+  nor WINDOW SIZE (`video_rows_show`; `port/web/README.md`), and Server
+  Setup neither LISTING nor PASSWORD (`server_settings_update`): a
+  browser's room is not listed in the server browser, so the two have
+  nothing to set.
+- `port/linux/src/menu_files.c`: Video Setup's ANTI-ALIASING is Android's
+  row (`web_android_rows`), as the browser draws as Android does
+  (`port/web/README.md`).
 - `port/linux/src/sdl_platform.c`: the mouse is not captured at start-up
   (a page would lock it at the first click, in the menus), a hidden page
   plays on a 33 ms timer (`web_wait_for_frame`, the fork's own), and the
@@ -379,7 +384,11 @@ them. What a browser lacks, real sockets, a relay lends it:
   them.
 - **The server browser.** The PC menus' Join Game > Server Browser lists
   desktop builds' public games (`p2p_lobby.c`, through the MQTT brokers),
-  and joins one by its invite, as Direct Link does.
+  and joins one by its invite, as Direct Link does. A game with a password
+  (network version 20) asks for it first: `p2p_listing_unlock` opens the
+  listing's sealed invite on this machine (`web_p2p_select.c` calls the
+  desktop's, which need not have started), and the game's own text field
+  takes the typing (on a phone, its on-screen keyboard).
 - **The brokers** are the desktop's: `port/assets/network/brokers.txt`,
   which the desktop builds read beside `config.toml`
   (`network.brokers_file`) and the browser build carries in its own files,

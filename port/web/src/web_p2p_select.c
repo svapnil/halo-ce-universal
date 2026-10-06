@@ -58,12 +58,14 @@ peers of one game get the same is too unlikely to guard against.
 	void prefix##_set_hosting_allowed(int allowed); \
 	int prefix##_invite_link(char *link, int size); \
 	void prefix##_set_hosting_public(int public); \
+	void prefix##_set_hosting_password(const char *password); \
 	void prefix##_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, \
 		int open, int in_progress, int has_teams); \
 	void prefix##_lobby_browse(int on); \
 	void prefix##_lobby_refresh(void); \
 	int prefix##_lobby_games(struct p2p_listing *games, int maximum_count); \
-	void prefix##_lobby_mark_failed(const unsigned char *identifier);
+	void prefix##_lobby_mark_failed(const unsigned char *identifier); \
+	int prefix##_listing_unlock(struct p2p_listing *listing, const char *password);
 
 P2P_BACKEND(p2p_web)
 P2P_BACKEND(p2p_native)
@@ -379,6 +381,11 @@ void p2p_set_hosting_public(int public)
 	p2p_web_set_hosting_public(public);
 }
 
+void p2p_set_hosting_password(const char *password)
+{
+	p2p_web_set_hosting_password(password);
+}
+
 void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int open,
 	int in_progress, int has_teams)
 {
@@ -410,4 +417,11 @@ void p2p_lobby_mark_failed(const unsigned char *identifier)
 {
 	if (native_running())
 		p2p_native_lobby_mark_failed(identifier);
+}
+
+/* (a listing's own work, the password's key: the desktop's need not have
+started) */
+int p2p_listing_unlock(struct p2p_listing *listing, const char *password)
+{
+	return p2p_native_listing_unlock(listing, password);
 }

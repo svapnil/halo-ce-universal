@@ -1667,6 +1667,11 @@ void p2p_set_hosting_public(int public)
 	(void)public;
 }
 
+void p2p_set_hosting_password(const char *password)
+{
+	(void)password;
+}
+
 void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int open,
 	int in_progress, int has_teams)
 {
@@ -1698,6 +1703,13 @@ int p2p_lobby_games(struct p2p_listing *games, int maximum_count)
 void p2p_lobby_mark_failed(const unsigned char *identifier)
 {
 	(void)identifier;
+}
+
+/* (web_p2p_select.c has the desktop's open it) */
+int p2p_listing_unlock(struct p2p_listing *listing, const char *password)
+{
+	(void)password;
+	return !listing->locked;
 }
 
 const char *p2p_take_clipboard_text(void)

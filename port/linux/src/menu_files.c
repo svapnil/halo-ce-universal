@@ -339,6 +339,42 @@ static long current_line(struct reader *reader)
 	return (long)XML_GetCurrentLineNumber(reader->parser);
 }
 
+#ifdef __EMSCRIPTEN__
+/* port (browser build): the desktop's elements, but Android's of these
+rows, as the browser draws as Android does (tools/web_build.py's
+GLES_RENDERER_UNITS): Video Setup's ANTI-ALIASING, whose choices are those
+the renderer has (no SMAA, no supersampling, no MSAA 8X) */
+static const char *const web_android_rows[] = {
+	"/video_settings/op_anti_aliasing",
+};
+
+/* whether the element (a row, or a screen's child that is one) is one of
+web_android_rows: either platform's, by its name less "_android" */
+static int web_android_row(const XML_Char **attributes)
+{
+	int index, row;
+
+	for (index = 0; attributes[index]; index += 2)
+	{
+		const char *name = attributes[index + 1];
+		size_t length = strlen(name);
+
+		if (strcmp(attributes[index], "name") && strcmp(attributes[index], "widget"))
+			continue;
+		if (length > 8 && !strcmp(name + length - 8, "_android"))
+			length -= 8;
+		for (row = 0; row < (int)(sizeof(web_android_rows) / sizeof(web_android_rows[0])); row++)
+		{
+			size_t row_length = strlen(web_android_rows[row]);
+
+			if (length >= row_length && !strncmp(name + length - row_length, web_android_rows[row], row_length))
+				return 1;
+		}
+	}
+	return 0;
+}
+#endif
+
 /* whether the element is for this platform (its platform attribute) */
 static int for_this_platform(struct reader *reader, const XML_Char **attributes)
 {
@@ -355,6 +391,10 @@ static int for_this_platform(struct reader *reader, const XML_Char **attributes)
 				reader_error(reader, "platform=\"%s\" is not \"desktop\" or \"android\"", platform);
 				return 1;
 			}
+#ifdef __EMSCRIPTEN__
+			if (web_android_row(attributes))
+				return !strcmp(platform, "android");
+#endif
 #ifdef HALO_ANDROID
 			return !strcmp(platform, "android");
 #else
