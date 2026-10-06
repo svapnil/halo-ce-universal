@@ -1017,7 +1017,11 @@ static void render_targets_release_screen(void)
 		released = TRUE;
 	}
 	if (released)
+	{
+		/* (the targets found last may be among them) */
+		memset(recent_render_targets, 0, sizeof(recent_render_targets));
 		xgpu_gl_state_invalidate();
+	}
 }
 #endif
 
@@ -3788,8 +3792,8 @@ void WINAPI D3DDevice_End(void)
 		free(planar);
 		for (index = 0; index < XGPU_VERTEX_ATTRIBUTE_COUNT; index++)
 		{
-			state_attribute_pointer(index, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE, (GLsizei)(4 * sizeof(float)),
-				offset + index * count * 4 * sizeof(float));
+			state_attribute_stream(index, 0, device.stream_buffer, 4, GL_FLOAT, GL_FALSE, FALSE,
+				(GLsizei)(4 * sizeof(float)), offset, index * count * 4 * sizeof(float));
 		}
 	}
 #else

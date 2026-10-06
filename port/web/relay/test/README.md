@@ -13,7 +13,7 @@ maps in `assets/maps` (`tools/extract_maps.py`).
    `port/web`, port 8765).
 2. `port/web/relay/test/native_host.sh [release tag]` starts two containers
    on a Docker network of their own, `halonet`:
-   - `halo-native-host`: the release (by default `build-125`), hosting Blood
+   - `halo-native-host`: the release (by default `build-128`), hosting Blood
      Gulch with a bot that shoots and is killed every 20 seconds
      (`debug.network_test`, `port/linux/NETCODE.md`);
    - `halo-relay`: the relay (built as for Fly.io: `port/web/Dockerfile`,
@@ -27,10 +27,10 @@ maps in `assets/maps` (`tools/extract_maps.py`).
 
    It prints the host's invite. The release's network version
    (`HALO_PORT_NETWORK_VERSION`) must be the browser build's, or the host
-   refuses it: `build-125` is the browser build's upstream base. Upstream
+   refuses it: `build-128` is the browser build's upstream base. Upstream
    keeps only its last five releases, so keep the zip of the one that
    matches (`halo-linux-release.zip`), and give the script its path once
-   the tag is gone: `native_host.sh ~/halo-releases/build-125-halo-linux-release.zip`.
+   the tag is gone: `native_host.sh ~/halo-releases/build-128-halo-linux-release.zip`.
 3. Join it, scripted, and log the page:
 
    ```

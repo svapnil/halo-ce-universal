@@ -15,11 +15,26 @@ Run-time resolution of the OpenGL entry points listed in gl.h.
 GL_FUNCTIONS(GL_DEFINE_FUNCTION)
 
 /* WebGL 2 is OpenGL ES 3.0: the ES 3.2 functions the renderer uses only
-where gl_initialize finds ES 3.2 may be missing */
+where gl_initialize finds ES 3.2 may be missing, and the desktop GL ones it
+uses only on the desktop (vertex attribute bindings, query results into a
+buffer by name) are */
 static int gl_function_optional(const char *name)
 {
 #ifdef __EMSCRIPTEN__
-	return !strcmp(name, "glCopyImageSubData") || !strcmp(name, "glDrawElementsBaseVertex");
+	static const char *const optional[] =
+	{
+		"glCopyImageSubData", "glDrawElementsBaseVertex",
+		"glVertexAttribFormat", "glVertexAttribIFormat", "glVertexAttribBinding", "glBindVertexBuffer",
+		"glGetQueryBufferObjectuiv",
+	};
+	unsigned long index;
+
+	for (index = 0; index < sizeof(optional) / sizeof(*optional); index++)
+	{
+		if (!strcmp(name, optional[index]))
+			return TRUE;
+	}
+	return FALSE;
 #else
 	(void)name;
 	return FALSE;
