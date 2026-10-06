@@ -45,7 +45,7 @@ The server is a Cloudflare Worker (`worker/worker.js`, configured by
   browser gives it no shared memory, so no threads.
 - The server must answer HTTP range requests, and HEAD requests with
   `Content-Length` and `Accept-Ranges: bytes`. The game reads the maps from
-  the server 16 MB at a time (`FETCH_CHUNK_SIZE` in `src/web_main.c`).
+  the server 32 MB at a time (`FETCH_CHUNK_SIZE` in `src/web_main.c`).
 - The game asks for `maps//<name>.map` (two slashes), which the server must
   take as `maps/<name>.map`.
 

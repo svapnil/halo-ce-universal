@@ -51,8 +51,16 @@ static const char *const map_names[] =
 #define WEB_PERSIST_ROOT "/persist"
 /* a map is read from the server in chunks of this size, each one request of
 the Worker (port/web/worker/worker.js): the first campaign level, about 130
-MB, is 9 of them. (4 MB chunks made 55,000 requests on the launch day.) */
-#define FETCH_CHUNK_SIZE (16 << 20)
+MB, is 5 of them. (4 MB chunks made 55,000 requests on the launch day.)
+
+No map may be larger than this and at most twice it: Emscripten's fetch
+backend (libwasmfs_fetch.js) reads such a file whole, as one chunk of its own
+size, but a later read that crosses this size replaces that chunk with this
+size's first chunk, and the rest of the file reads as nothing ("There's a
+problem with the disc you're using"). With 16 MB, every multiplayer map (19
+to 24 MB) was one. With 32 MB they are a chunk each, and ui.map too; the
+campaign's (73 MB and more) are read in chunks. */
+#define FETCH_CHUNK_SIZE (32 << 20)
 
 static int mount_maps(void)
 {
