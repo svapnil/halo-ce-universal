@@ -799,6 +799,12 @@ ones (black, blue, sage) read on the pane too. */
 	box-shadow: 0 12px 40px rgb(0 0 0 / 0.5);
 }
 
+/* (beside the box, its messages do not make it, nor the row, taller: it
+takes the box's height, and the list scrolls) */
+.layout > .chat {
+	contain: size;
+}
+
 .chat-header {
 	display: flex;
 	align-items: center;

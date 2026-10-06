@@ -1456,6 +1456,32 @@ static boolean color_choose(void)
 	return TRUE;
 }
 
+/* ---------- Edit Profile Settings: its picture of Gamepad Setup, the
+profile's button settings as the Xbox's Controller Setup shows them */
+
+/* the picture's frames (the bitmap's: tools/port_settings.py's
+BITMAP_FRAMES): Gamepad Setup's row's, as the list numbers its rows
+(player_profile_edit_select_menu_update_extended_description), and after
+the PC version's nine the Xbox's five of the button settings */
+#define PROFILE_GAMEPAD_FRAME 2
+#define PROFILE_FIRST_LAYOUT_FRAME 9
+
+/* "port gamepad layout preview" (the picture's own): on Gamepad Setup's
+row, the edited profile's button settings */
+static void profile_gamepad_layout(struct widget_instance *picture)
+{
+	struct player_profile *profile = player_ui_get_edit_player_profile();
+	short frame = picture->animation.current_frame_index;
+
+	if (frame == PROFILE_GAMEPAD_FRAME ||
+		(frame >= PROFILE_FIRST_LAYOUT_FRAME && frame < PROFILE_FIRST_LAYOUT_FRAME + NUMBER_OF_BUTTON_PRESETS))
+	{
+		picture->animation.current_frame_index = (short)(PROFILE_FIRST_LAYOUT_FRAME +
+			(profile && profile->controller_settings.button_preset < NUMBER_OF_BUTTON_PRESETS ?
+				profile->controller_settings.button_preset : _button_preset_standard));
+	}
+}
+
 /* ---------- Profiles: the player profiles, and a row to make one (as the
 PC version's list has them, but by the Xbox's names for its spinner's
 functions); choosing one makes it player 1's, the profile the campaign and
@@ -3345,8 +3371,16 @@ static void lobby_browser_update(struct widget_instance *list)
 		/* (no ping yet: its host is reached only on joining) */
 		text_set(named(row, "server_item_ping", 0), game->failed ? L"FAILED" : !game->open ? L"CLOSED" :
 			game->in_progress ? L"LIVE" : L"-");
-		/* (the lock: a game with a password) */
-		visible_set(named(row, "server_item_locked", 0), game->locked);
+		/* (the lock: a game with a password. Its bitmap's first frame is
+		empty, the PC version's for no lock; the next is the lock, in the
+		menus' blue) */
+		{
+			struct widget_instance *lock = named(row, "server_item_locked", 0);
+
+			visible_set(lock, game->locked);
+			if (lock)
+				lock->animation.current_frame_index = 1;
+		}
 		visible_set(named(row, "server_item_dedicated", 0), FALSE);
 		visible_set(named(row, "server_item_classic", 0), FALSE);
 	}
@@ -5361,4 +5395,6 @@ void pc_menu_game_data_function_invoke(
 		profile_list_update(widget);
 	else if (!strcmp(name, "load game list update"))
 		saved_game_list_update(widget);
+	else if (!strcmp(name, "port gamepad layout preview"))
+		profile_gamepad_layout(widget);
 }
