@@ -39,19 +39,25 @@ browser keeps `config.toml`).
 
 ## Memory
 
-WebAssembly's memory is 32-bit: 4 GB at most. The heap starts past the Xbox
-window at 0x80000000 (`port/linux/src/xbox_memory.c`), so about 2 GB below
-it is never used, and at the main menu the heap is already 3,067 MB (779 MB
-of it in malloc's hands, most of it the map cache, `z:\cacheNNN.map`, in
-memory). Measured (`?crashtest=oom`): **1,141 MB more** can be had, and no
-more. Then the next allocation fails, and the game aborts wherever that is
-(a font's, in the test).
+WebAssembly's memory is 32-bit: 4 GB at most. The memory reaches past the
+Xbox window at 0x80000000 from the start, and the heap skips the window
+(`port/linux/src/xbox_memory.c`; README.md's "Memory"): at the main menu
+the memory is 2,176 MB (the window's end), with 799 MB in malloc's hands,
+most of it the map cache, `z:\cacheNNN.map`, in memory. Measured
+(`?crashtest=oom`, 2026-10-07): **3,136 MB more** can be had, and no more.
+Then the next allocation fails, and the game aborts wherever that is (a
+font's, in the test). (Until 2026-10-07 the heap was grown past the window
+at start-up, which left the 2 GB below it unused: the memory was 3,067 MB
+at the main menu and 1,141 MB more could be had.)
 
 Playing does not use it up: the heap was the same before, in and after
-games on two maps (3,067 MB, 778 MB in use), and the browser's processes
-stayed near 300 MB (the page) and 230 MB (the GPU) through four minutes
-of a public game. So memory is not the usual cause of a crash; a report's numbers say
-when it was.
+games on two maps (3,067 MB, 778 MB in use, as it was then), and the
+browser's processes stayed near 300 MB (the page) and 230 MB (the GPU)
+through four minutes of a public game. So memory is not the usual cause of
+a crash on a desktop; a report's numbers say when it was. On a phone the
+browser ends a page over its memory budget without a word (`killed`, in
+view): what the page touches is what counts there, and the map cache files
+are most of it.
 
 ## What is captured
 

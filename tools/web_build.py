@@ -119,9 +119,10 @@ WEB_GAME_UNITS = {"web_lobby.c"}
 #    sdl_platform.c platform_video_swap);
 #  - its files are WasmFS, whose fetch backend reads the maps from the
 #    server (port/web/src/web_main.c);
-#  - its memory grows past the Xbox window at 0x80000000 (xbox_memory.c).
+#  - its memory reaches past the Xbox window at 0x80000000, which its heap
+#    skips: malloc takes its memory through sbrk, wrapped (xbox_memory.c).
 WEB_LINK_FLAGS = [
-    "-pthread", "--use-port=sdl3", OPTIMISATION, "-g2",
+    "-pthread", "--use-port=sdl3", OPTIMISATION, "-g2", "-Wl,--wrap=sbrk",
     "-sENVIRONMENT=web,worker",
     "-sPROXY_TO_PTHREAD=1", "-sOFFSCREENCANVAS_SUPPORT=1", "-sPTHREAD_POOL_SIZE=16",
     "-sUSE_WEBGL2=1", "-sMIN_WEBGL_VERSION=2", "-sMAX_WEBGL_VERSION=2",

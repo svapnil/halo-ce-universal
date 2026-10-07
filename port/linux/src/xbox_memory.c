@@ -21,6 +21,9 @@ Xbox kernel does.
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef __EMSCRIPTEN__
+#include <emscripten/heap.h>
+#endif
 
 #define PAGE_SIZE_BYTES 0x1000UL
 #define CONTIGUOUS_PAGE_COUNT (PLATFORM_CONTIGUOUS_SIZE / PAGE_SIZE_BYTES)
@@ -50,16 +53,18 @@ __attribute__((constructor(101)))
 static void contiguous_arena_reserve(void)
 {
 #ifdef __EMSCRIPTEN__
-	/* WebAssembly memory is one flat array with no mappings: grow the heap
-	past the window, so that the allocator never hands out an address in
-	it, and the window is ordinary memory (port/web/README.md) */
-	char *top = sbrk(0);
+	/* WebAssembly memory is one flat array with no mappings: grow the
+	memory to reach past the window, so that the window is ordinary memory,
+	which the heap keeps out of by skipping it (__wrap_sbrk below;
+	port/web/README.md) */
+	unsigned long end = PLATFORM_CONTIGUOUS_BASE + PLATFORM_CONTIGUOUS_SIZE;
 
-	if ((unsigned long)top <= PLATFORM_CONTIGUOUS_BASE &&
-		sbrk((intptr_t)(PLATFORM_CONTIGUOUS_BASE + PLATFORM_CONTIGUOUS_SIZE - (unsigned long)top)) != (void *)-1)
+	if ((unsigned long)sbrk(0) <= PLATFORM_CONTIGUOUS_BASE &&
+		(emscripten_get_heap_size() >= end || emscripten_resize_heap(end)))
 		arena_reserved = TRUE;
 	else
-		platform_log("cannot reserve the Xbox contiguous memory window (the heap reaches %p)", (void *)top);
+		platform_log("cannot reserve the Xbox contiguous memory window (the memory is %lu MB, the heap reaches %p)",
+			(unsigned long)emscripten_get_heap_size() >> 20, sbrk(0));
 #else
 	void *wanted = (void *)PLATFORM_CONTIGUOUS_BASE;
 	void *result = mmap(wanted, PLATFORM_CONTIGUOUS_SIZE, PROT_NONE,
@@ -78,6 +83,46 @@ static void contiguous_arena_reserve(void)
 	}
 #endif
 }
+
+#ifdef __EMSCRIPTEN__
+/* The heap skips the window. Emscripten's malloc (dlmalloc) takes its memory
+from sbrk, which the build wraps (tools/web_build.py, --wrap=sbrk): the first
+request that would reach into the window moves the heap's break to the
+window's end first, and malloc goes on above the window, in a new segment
+(dlmalloc copes with a break that is not where it left it: sys_alloc), so the
+memory below the window, about 2 GB, is the heap's too. What was left below
+the window, less than that request, is not used. (The first version grew the
+heap past the window at start-up instead, which left the memory below it
+unused.) The lock: dlmalloc holds its own while it calls sbrk, but not every
+caller need. */
+void *__real_sbrk(intptr_t increment);
+
+void *__wrap_sbrk(intptr_t increment)
+{
+	static pthread_mutex_t break_lock = PTHREAD_MUTEX_INITIALIZER;
+	unsigned long end = PLATFORM_CONTIGUOUS_BASE + PLATFORM_CONTIGUOUS_SIZE;
+	void *result;
+
+	pthread_mutex_lock(&break_lock);
+	if (increment > 0)
+	{
+		unsigned long top = (unsigned long)__real_sbrk(0);
+
+		if (top < end &&
+			(top >= PLATFORM_CONTIGUOUS_BASE || (unsigned long)increment > PLATFORM_CONTIGUOUS_BASE - top))
+		{
+			if (__real_sbrk((intptr_t)(end - top)) == (void *)-1)
+			{
+				pthread_mutex_unlock(&break_lock);
+				return (void *)-1;
+			}
+		}
+	}
+	result = __real_sbrk(increment);
+	pthread_mutex_unlock(&break_lock);
+	return result;
+}
+#endif
 
 BOOL platform_is_contiguous(const void *address)
 {

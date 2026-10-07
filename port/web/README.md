@@ -136,10 +136,28 @@ build (`tools/web_build.py` reads the lists of `tools/linux_build.py`) with
 the platform layer in `port/linux/src`. The source of the game is not
 changed.
 
-- **Memory.** WebAssembly memory is one flat array. At start-up,
-  `xbox_memory.c` grows the heap past the Xbox window at `0x80000000`, so
-  that the allocator never uses it, and the window is ordinary memory. The
-  memory can grow to 4 GB.
+- **Memory.** WebAssembly memory is one flat array of at most 4 GB
+  (`wasm32`), with no mappings. At start-up, `xbox_memory.c` grows the
+  memory to reach past the Xbox window at `0x80000000` (128 MB, as
+  Android's: `platform.h`), so that the window is ordinary memory, and the
+  heap skips the window: Emscripten's malloc takes its memory through
+  `sbrk`, which the build wraps (`--wrap=sbrk`, `tools/web_build.py`), and
+  the first request that would reach into the window moves the heap's
+  break past it instead, so that malloc uses the memory below the window
+  (about 2 GB) and then the memory above. Until 2026-10-07 the heap was
+  grown past the window at start-up, which left the memory below it unused:
+  the memory was 3,068 MB at the main menu, 1,028 MB short of the limit,
+  with malloc using 799 MB (about 730 MB of it the game's six map cache
+  files, `cache_files_windows.c`, which `web_main.c` keeps in memory). Now
+  it is 2,176 MB there, with the heap below the window, and malloc can have
+  3,136 MB more (`?crashtest=oom`, `CRASHES.md`) where it could have 1,141;
+  a window of upstream's desktop size (512 MB) would cost only its own
+  size. The memory
+  a page touches is what counts on a phone: iOS reloads a page over its
+  budget (about 1.5–3 GB on recent iPhones, less on older ones), and the
+  map cache files are most of what the page touches before the game's own
+  window. The page's crash reports carry the numbers (`CRASHES.md`:
+  `heapMB` is the memory's size, `mallocUsedMB` the heap's).
 - **Threads.** The game's `main` runs on a worker (`PROXY_TO_PTHREAD`), so it
   can block as it does on the desktop. It draws on the page's canvas from
   there (`OFFSCREENCANVAS_SUPPORT`).
