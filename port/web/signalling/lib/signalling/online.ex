@@ -7,7 +7,11 @@
 #                                                     as the count changes
 #                    {"type": "history", "messages": [...]}   when it connects
 #                    {"type": "chat", "id", "name", "color", "text", "at"}
-#                    (and "card", "started": a game card, Signalling.Chat)
+#                    {"type": "typing", "count": n}   when it connects, and
+#                                                     as it changes: how many
+#                                                     other pages type
+#                    (a chat message's "card", "started": a game card,
+#                    Signalling.Chat)
 #                    {"type": "card", "room", "card"}  a game card's room
 #                                                     as it is now
 #                    {"type": "error", "code": "busy", "message"}  too many
@@ -17,12 +21,14 @@
 #                                                     alone: a card of it;
 #                                                     "started": true, the
 #                                                     host's, as it starts)
+#                    {"type": "typing"}               its player types (at
+#                                                     most every 3 seconds)
 #                    ping (every 30 seconds)          answered pong
 defmodule Signalling.Online do
   @moduledoc false
   @behaviour WebSock
 
-  alias Signalling.{Chat, Limits, OnlineCount, Presence, Room}
+  alias Signalling.{Chat, Limits, OnlineCount, Presence, Room, Typing}
 
   @impl true
   def init(page) do
@@ -31,9 +37,14 @@ defmodule Signalling.Online do
         {:ok, _} = Presence.track(self(), Presence.topic(), page.visitor, %{})
         :ok = Phoenix.PubSub.subscribe(Signalling.PubSub, OnlineCount.topic())
         :ok = Phoenix.PubSub.subscribe(Signalling.PubSub, Chat.topic())
-        page = Map.merge(page, %{name: Chat.name(nil), color: Chat.color(page.visitor)})
+        :ok = Phoenix.PubSub.subscribe(Signalling.PubSub, Typing.topic())
+        typing = Typing.count(Typing.current(), self())
+
+        page =
+          Map.merge(page, %{name: Chat.name(nil), color: Chat.color(page.visitor), typing: typing})
+
         history = %{type: "history", messages: Chat.history()}
-        {:push, [count(OnlineCount.current()), text(history)], page}
+        {:push, [count(OnlineCount.current()), text(history), typing(typing)], page}
 
       :busy ->
         # (the page shows no count, and tries again later)
@@ -52,6 +63,10 @@ defmodule Signalling.Online do
       {:ok, %{"type" => "chat", "text" => said} = data} ->
         say(Chat.text(said), data["started"] == true, page)
 
+      {:ok, %{"type" => "typing"}} ->
+        Typing.typing()
+        {:ok, page}
+
       _ ->
         {:ok, page}
     end
@@ -67,6 +82,14 @@ defmodule Signalling.Online do
 
   def handle_info({:card, room, card}, page),
     do: {:push, text(%{type: "card", room: room, card: card}), page}
+
+  # (told only when its own count changes: its own typing is not in it)
+  def handle_info({:typing, pages}, page) do
+    case Typing.count(pages, self()) do
+      n when n == page.typing -> {:ok, page}
+      n -> {:push, typing(n), %{page | typing: n}}
+    end
+  end
 
   def handle_info(_, page), do: {:ok, page}
 
@@ -86,6 +109,7 @@ defmodule Signalling.Online do
         _ -> Chat.say(page.name, page.color, said)
       end
 
+      Typing.done()
       {:ok, page}
     else
       busy = %{type: "error", code: "busy", message: "Too many messages: wait a minute"}
@@ -94,5 +118,6 @@ defmodule Signalling.Online do
   end
 
   defp count(n), do: text(%{type: "online", count: n})
+  defp typing(n), do: text(%{type: "typing", count: n})
   defp text(message), do: {:text, JSON.encode!(message)}
 end

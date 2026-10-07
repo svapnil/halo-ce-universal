@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import { CrashPanel, SaveLogButton } from "./CrashPanel.jsx";
 import { browserSupport, joinInvite, startGame } from "./game.js";
 import { keepFromBrowser } from "./keys.js";
-import { ChatPane } from "./Chat.jsx";
+import { ChatIcon, ChatPane, ChatRail } from "./Chat.jsx";
 import { joinLobby } from "./online.js";
 import { watchProfileName } from "./profile.js";
 import { TouchControls, useTouchDevice } from "./TouchControls.jsx";
@@ -81,13 +81,16 @@ export default function App() {
 	window, with a mouse); else over the game, from the bar's button */
 	const chatDocked = useMediaQuery(CHAT_DOCKED_QUERY);
 	const [chatOpen, setChatOpen] = useState(false);
+	/* the docked chat put away, to a strip: kept for the next visit */
+	const [chatRailed, setChatRailed] = useState(chatRailedKept);
 	/* a phone sideways: the bar is hidden, for the picture to have the whole
 	screen, and shown over it from the corner's button (or by a status to
-	read) */
+	read); hidden too while the chat is open over the game, whose input it
+	would cover (the chat's own button closes it) */
 	const landscape = useMediaQuery("(orientation: landscape)");
 	const barFloating = touch && landscape;
 	const [barOpen, setBarOpen] = useState(false);
-	const barHidden = barFloating && !barOpen;
+	const barHidden = barFloating && (!barOpen || (chatOpen && !chatDocked));
 	/* no fullscreen for pages (an iPhone's Safari): the way is the Home
 	Screen, which the fullscreen button then explains; from the Home Screen
 	(standalone) there is nothing to ask for */
@@ -99,11 +102,13 @@ export default function App() {
 	const [messages, setMessages] = useState([]);
 	const [chatNotice, setChatNotice] = useState("");
 	const [chatState, setChatState] = useState("connecting");
+	/* how many other pages type in the chat */
+	const [typing, setTyping] = useState(0);
 	const siteLobby = useRef(null);
 
 	useEffect(() => {
 		const joined = joinLobby({ onCount: setOnline, onMessages: setMessages, onNotice: setChatNotice,
-			onState: setChatState });
+			onState: setChatState, onTyping: setTyping });
 		siteLobby.current = joined;
 		/* the chat's name: the player's Halo profile's (profile.js) */
 		const stopName = watchProfileName((name) => joined.setName(name));
@@ -152,6 +157,24 @@ export default function App() {
 		} else {
 			location.reload();
 		}
+	}
+
+	/* the messages that came while the chat was away: those after the last
+	one shown (the ones there at the start count as read, and all of them
+	again when the server starts over) */
+	const chatShown = chatDocked ? !chatRailed : chatOpen;
+	const lastId = messages.at(-1)?.id ?? null;
+	const [readId, setReadId] = useState(null);
+	useEffect(() => {
+		if (lastId !== null && (chatShown || readId === null || lastId < readId)) {
+			setReadId(lastId);
+		}
+	}, [chatShown, lastId, readId]);
+	const unread = readId === null ? 0 : messages.filter((message) => message.id > readId).length;
+
+	function railChat(railed) {
+		setChatRailed(railed);
+		keepChatRailed(railed);
 	}
 
 	/* (a status to read shows the hidden bar for a while; a status cleared
@@ -249,12 +272,12 @@ export default function App() {
 		focusGame();
 	}
 
-	const chatProps = { count: online, messages, notice: chatNotice, state: chatState, ownRoom, joinedRoom, onSay: say,
-		onJoin: joinFromCard };
+	const chatProps = { count: online, messages, notice: chatNotice, state: chatState, typing, ownRoom, joinedRoom,
+		onSay: say, onJoin: joinFromCard, onTyping: () => siteLobby.current?.typing() };
 
 	return (
 		<main className="page">
-			<div className="layout">
+			<div className={`layout${chatDocked && chatRailed ? " chat-railed" : ""}`}>
 				<div className="console">
 					<div ref={frame} className="screen">
 						{unsupported ?
@@ -283,9 +306,7 @@ export default function App() {
 						{homeScreenHint && <HomeScreenHint landscape={landscape} onClose={() => { setHomeScreenHint(false); focusGame(); }} />}
 						{!chatDocked && chatOpen && (
 							<div className="overlay chat-drawer" onClick={(event) => event.target === event.currentTarget && closeChat()}>
-								<ChatPane {...chatProps} onDone={closeChat} />
-								<button type="button" className="toast-close chat-drawer-close" onClick={closeChat}
-									aria-label="Close the chat">×</button>
+								<ChatPane {...chatProps} onDone={closeChat} onHide={closeChat} hideLabel="Close the chat" />
 							</div>
 						)}
 					</div>
@@ -298,7 +319,10 @@ export default function App() {
 							<button type="button" className="bar-button bar-chat" onClick={() => setChatOpen(!chatOpen)}
 								aria-label="Lobby chat" aria-expanded={chatOpen}
 								title={online !== null ? `Lobby chat: ${online.toLocaleString()} online` : "Lobby chat"}>
-								<ChatIcon />
+								<span className="bar-chat-icon">
+									<ChatIcon />
+									{unread > 0 && !chatOpen && <span className="bar-chat-unread" aria-label={`${unread} new`} />}
+								</span>
 								{online !== null && <span className="bar-chat-count">{online.toLocaleString()}</span>}
 							</button>
 						)}
@@ -316,7 +340,10 @@ export default function App() {
 						)}
 					</div>
 				</div>
-				{chatDocked && <ChatPane {...chatProps} onDone={focusGame} />}
+				{chatDocked && (chatRailed ?
+					<ChatRail count={online} unread={unread} onShow={() => railChat(false)} /> :
+					<ChatPane {...chatProps} onDone={focusGame} onHide={() => { railChat(true); focusGame(); }}
+						hideLabel="Minimize the chat" />)}
 			</div>
 		</main>
 	);
@@ -433,6 +460,30 @@ function noticeConfirmed() {
 		return localStorage.getItem(NOTICE_KEY) === "confirmed";
 	} catch {
 		return false;
+	}
+}
+
+/* the docked chat put away (App's chatRailed), kept where the browser keeps
+anything */
+const CHAT_RAILED_KEY = "halo-chat-railed";
+
+function chatRailedKept() {
+	try {
+		return localStorage.getItem(CHAT_RAILED_KEY) === "1";
+	} catch {
+		return false;
+	}
+}
+
+function keepChatRailed(railed) {
+	try {
+		if (railed) {
+			localStorage.setItem(CHAT_RAILED_KEY, "1");
+		} else {
+			localStorage.removeItem(CHAT_RAILED_KEY);
+		}
+	} catch {
+		// (shown again at the next visit)
 	}
 }
 
@@ -800,14 +851,6 @@ function MoreIcon() {
 			<circle cx="6" cy="12" r="1.8" fill="currentColor" />
 			<circle cx="12" cy="12" r="1.8" fill="currentColor" />
 			<circle cx="18" cy="12" r="1.8" fill="currentColor" />
-		</svg>
-	);
-}
-
-function ChatIcon() {
-	return (
-		<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-			<path d="M4 5h16v11H9l-5 4z" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
 		</svg>
 	);
 }

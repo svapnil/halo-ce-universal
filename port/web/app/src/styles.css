@@ -6,16 +6,11 @@
 	--text: #9aa3ad;
 	--text-strong: #e6e9ed;
 	--bar-height: 40px;
-	/* the box: 16:9, as large as the window has room for. The game draws the
-	canvas's shape at the canvas's pixels (sdl_platform.c's
-	platform_screen_mode), so this is the picture's shape and its
-	resolution too. */
-	--screen-width: min(calc(100vw - 32px - var(--chat-width) - var(--chat-gap)),
-		calc((100vh - var(--bar-height) - 48px) * 16 / 9));
 	/* the lobby's chat, to the box's right (Chat.jsx): none where the window
-	has no room for it */
+	has no room for it, and a strip where it is put away (.chat-railed) */
 	--chat-width: 300px;
 	--chat-gap: 12px;
+	--chat-rail-width: 44px;
 }
 
 /* (a narrow window, or a finger's: the chat is over the game instead, from
@@ -49,10 +44,20 @@ body {
 	height: 100%;
 }
 
-/* the box and, to its right, the lobby's chat, as tall as it */
+/* the box and, to its right, the lobby's chat, as tall as it. The box:
+16:9, as large as the window has room for beside the chat (the chat put
+away gives the box its room). The game draws the canvas's shape at the
+canvas's pixels (sdl_platform.c's platform_screen_mode), so this is the
+picture's shape and its resolution too. */
 .layout {
+	--screen-width: min(calc(100vw - 32px - var(--chat-width) - var(--chat-gap)),
+		calc((100vh - var(--bar-height) - 48px) * 16 / 9));
 	display: flex;
 	gap: var(--chat-gap);
+}
+
+.layout.chat-railed {
+	--chat-width: var(--chat-rail-width);
 }
 
 .console {
@@ -808,19 +813,105 @@ takes the box's height, and the list scrolls) */
 .chat-header {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
+	gap: 6px;
 	height: var(--bar-height);
-	padding: 0 12px;
+	padding: 0 12px 0 6px;
 	border-bottom: 1px solid var(--edge);
 	flex: none;
 }
 
 .chat-title {
+	flex: 1;
 	margin: 0;
 	color: var(--text-strong);
 	font-size: 13px;
 	font-weight: 600;
+}
+
+/* the header's button that puts the chat away: chevrons to the right, the
+way it goes; on the strip, turned, the way it comes back */
+.chat-hide {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: 4px;
+	background: none;
+	color: var(--text);
+	cursor: pointer;
+}
+
+.chat-hide:hover {
+	background: var(--edge);
+	color: var(--text-strong);
+}
+
+.chat-hide:focus-visible {
+	outline: 2px solid var(--text-strong);
+	outline-offset: 1px;
+}
+
+.chat-show svg {
+	transform: scaleX(-1);
+}
+
+/* The chat put away (Chat.jsx's ChatRail): a strip beside the box, the
+button at its top where the header's was, and under it the chat's icon, the
+messages come meanwhile and how many are online. All of it brings the chat
+back. */
+.chat-rail {
+	align-items: center;
+}
+
+.chat-rail .chat-show {
+	margin: 6px 0;
+}
+
+.chat-rail-body {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+	flex: 1;
+	width: 100%;
+	padding: 10px 0;
+	border: 0;
+	border-top: 1px solid var(--edge);
+	background: none;
+	color: var(--text);
+	font: inherit;
+	cursor: pointer;
+}
+
+.chat-rail-body:hover {
+	background: rgb(255 255 255 / 0.03);
+	color: var(--text-strong);
+}
+
+.chat-unread {
+	min-width: 18px;
+	padding: 0 5px;
+	border-radius: 9px;
+	background: #6493ed;
+	color: #0b0d10;
+	font-size: 11px;
+	font-weight: 700;
+	line-height: 18px;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+	box-sizing: border-box;
+}
+
+.chat-rail-online {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 4px;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
 }
 
 .chat-online {
@@ -854,12 +945,10 @@ takes the box's height, and the list scrolls) */
 	overscroll-behavior: contain;
 }
 
+/* (the text runs on from the name, and wraps under it) */
 .chat-message {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: baseline;
-	gap: 2px 6px;
-	padding: 4px 0;
+	padding: 3px 0;
+	line-height: 20px;
 	overflow-wrap: anywhere;
 }
 
@@ -869,6 +958,8 @@ takes the box's height, and the list scrolls) */
 }
 
 .chat-name {
+	display: inline-block;
+	margin-right: 6px;
 	padding: 0 5px;
 	border-radius: 3px;
 	background: currentColor;
@@ -887,15 +978,25 @@ takes the box's height, and the list scrolls) */
 }
 
 .chat-text {
-	flex: 1 1 auto;
-	min-width: 0;
 	color: var(--text-strong);
 }
 
+/* the time over the messages after a quiet while: a line across the list */
 .chat-time {
-	margin-left: auto;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 0 4px;
 	font-size: 11px;
+	font-variant-numeric: tabular-nums;
 	opacity: 0.6;
+}
+
+.chat-time::before,
+.chat-time::after {
+	content: "";
+	flex: 1;
+	border-top: 1px solid var(--edge);
 }
 
 /* a game card (Chat.jsx's GameCard): a browser's game, live */
@@ -1024,6 +1125,52 @@ takes the box's height, and the list scrolls) */
 	font-size: 12px;
 }
 
+/* how many others type: a line under the list, its room kept when empty,
+the dots pulsing (still, for those who ask for less motion) */
+.chat-typing {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: none;
+	height: 18px;
+	margin: 0;
+	padding: 0 12px 2px;
+	font-size: 11px;
+	opacity: 0.75;
+}
+
+.chat-typing-dots {
+	display: flex;
+	gap: 2px;
+}
+
+.chat-typing-dots span {
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background: currentColor;
+	animation: chat-typing 1.2s ease-in-out infinite;
+}
+
+.chat-typing-dots span:nth-child(2) {
+	animation-delay: 0.2s;
+}
+
+.chat-typing-dots span:nth-child(3) {
+	animation-delay: 0.4s;
+}
+
+@keyframes chat-typing {
+	0%, 60%, 100% { opacity: 0.3; }
+	30% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.chat-typing-dots span {
+		animation: none;
+	}
+}
+
 .chat-form {
 	display: flex;
 	gap: 6px;
@@ -1062,12 +1209,33 @@ takes the box's height, and the list scrolls) */
 }
 
 /* The chat over the game (App.jsx: where it is not docked beside it): a
-drawer on the right, as tall as the picture, the dimmed game behind. Its
-input is 16px on purpose: a phone zooms in on a smaller one. */
+drawer on the right, as tall as the picture, the dimmed game behind; on a
+phone upright, the picture's whole width. The header's button closes it, as
+the bar's button, Esc and a tap on the game beside it do. Its input is 16px
+on purpose: a phone zooms in on a smaller one. The bar's button carries a
+dot for the messages come while it was closed. */
 .bar-chat {
+	display: flex;
+	align-items: center;
 	width: auto;
 	gap: 6px;
 	padding: 0 8px;
+}
+
+.bar-chat-icon {
+	position: relative;
+	display: grid;
+}
+
+.bar-chat-unread {
+	position: absolute;
+	top: -2px;
+	right: -3px;
+	width: 8px;
+	height: 8px;
+	border: 2px solid var(--frame);
+	border-radius: 50%;
+	background: #6493ed;
 }
 
 .bar-chat-count {
@@ -1087,26 +1255,56 @@ input is 16px on purpose: a phone zooms in on a smaller one. */
 	border-width: 0 0 0 1px;
 	border-radius: 0;
 	box-shadow: -12px 0 40px rgb(0 0 0 / 0.5);
-}
-
-.chat-drawer .chat-header {
-	padding-right: 40px;
+	box-sizing: border-box;
 }
 
 .chat-drawer .chat-input {
 	font-size: 16px;
 }
 
-.chat-drawer-close {
-	position: absolute;
-	top: 7px;
-	right: 7px;
-}
-
+/* A finger's: the drawer keeps clear of the notch, the rounded corners and
+(sideways, where the picture reaches the bottom) the home indicator, and its
+buttons are a finger's size. Upright, the bar is under the picture and keeps
+clear of the bottom itself. */
 @media (pointer: coarse) {
 	.chat-drawer .chat {
+		padding-top: env(safe-area-inset-top);
 		padding-right: env(safe-area-inset-right);
+	}
+
+	.chat-drawer .chat-header {
+		height: 48px;
+	}
+
+	.chat-drawer .chat-hide {
+		width: 40px;
+		height: 40px;
+	}
+
+	.chat-drawer .chat-messages {
+		padding: 8px 14px;
+	}
+
+	.chat-drawer .chat-message {
+		line-height: 22px;
+	}
+
+	.chat-drawer .chat-send {
+		min-height: 40px;
+	}
+}
+
+@media (pointer: coarse) and (orientation: landscape) {
+	.chat-drawer .chat {
 		padding-bottom: env(safe-area-inset-bottom);
+	}
+}
+
+@media (pointer: coarse) and (orientation: portrait) and (max-width: 500px) {
+	.chat-drawer .chat {
+		width: 100%;
+		padding-left: env(safe-area-inset-left);
+		border-width: 0;
 	}
 }
 
