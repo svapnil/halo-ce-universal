@@ -100,6 +100,8 @@ enum
 	_out_not_hosting,
 	/* the page is to join the room of this invite (the menus' Direct Link) */
 	_out_join,
+	/* the hosted game as it is now (struct web_game_state) */
+	_out_game,
 };
 
 /* the records of the ring from the page */
@@ -1660,6 +1662,82 @@ int p2p_invite_link(char *link, int size)
 	return 1;
 }
 
+/* ---------- the hosted game, for the room on the signalling's server
+
+What the game's server says of its game (p2p_set_game_listing,
+p2p_set_game_player_counts, each server tick), told the page as it changes,
+which tells the room (NETWORK.md, "The room's game"). Only the signalling's
+server gets it: a game hosted in the browser is never listed where desktop
+builds look (the MQTT brokers' server browser), nor joined by them */
+
+enum
+{
+	_game_open = 1,
+	_game_in_progress = 2,
+	_game_teams = 4,
+};
+
+/* a record's body: as app/src/net_bridge.js reads it */
+struct web_game_state
+{
+	unsigned char engine;
+	unsigned char flags;
+	unsigned char players;
+	unsigned char maximum_players;
+	char name[32];
+	char map[32];
+	char gametype[48];
+};
+
+static struct
+{
+	struct web_game_state now;
+	struct web_game_state told;
+	int ever_told;
+} game_state;
+
+static void text_copy(char *destination, int size, const char *source)
+{
+	memset(destination, 0, (size_t)size);
+	snprintf(destination, (size_t)size, "%s", source ? source : "");
+}
+
+/* tells the page of the game's state, if it changed (the game's thread) */
+static void game_state_tell(void)
+{
+	if (!p2p.running)
+		return;
+	pthread_mutex_lock(&p2p_lock);
+	if ((!game_state.ever_told || memcmp(&game_state.now, &game_state.told, sizeof(game_state.now))) &&
+		out_record(0, _out_game, &game_state.now, (int)sizeof(game_state.now), NULL, 0))
+	{
+		game_state.told = game_state.now;
+		game_state.ever_told = 1;
+	}
+	pthread_mutex_unlock(&p2p_lock);
+}
+
+void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int open,
+	int in_progress, int has_teams)
+{
+	struct web_game_state *now = &game_state.now;
+
+	text_copy(now->name, sizeof(now->name), name);
+	text_copy(now->map, sizeof(now->map), map);
+	text_copy(now->gametype, sizeof(now->gametype), gametype);
+	now->engine = (unsigned char)(engine_type < 0 ? 0 : engine_type > 255 ? 255 : engine_type);
+	now->flags = (unsigned char)((open ? _game_open : 0) | (in_progress ? _game_in_progress : 0) |
+		(has_teams ? _game_teams : 0));
+	game_state_tell();
+}
+
+void p2p_set_game_player_counts(int count, int maximum)
+{
+	game_state.now.players = (unsigned char)(count < 0 ? 0 : count > 255 ? 255 : count);
+	game_state.now.maximum_players = (unsigned char)(maximum < 0 ? 0 : maximum > 255 ? 255 : maximum);
+	game_state_tell();
+}
+
 /* a room is not listed in the server browser (desktop builds could not
 join it): these keep nothing */
 void p2p_set_hosting_public(int public)
@@ -1670,18 +1748,6 @@ void p2p_set_hosting_public(int public)
 void p2p_set_hosting_password(const char *password)
 {
 	(void)password;
-}
-
-void p2p_set_game_listing(const char *name, const char *map, const char *gametype, int engine_type, int open,
-	int in_progress, int has_teams)
-{
-	(void)name;
-	(void)map;
-	(void)gametype;
-	(void)engine_type;
-	(void)open;
-	(void)in_progress;
-	(void)has_teams;
 }
 
 void p2p_lobby_browse(int on)
@@ -1715,12 +1781,6 @@ int p2p_listing_unlock(struct p2p_listing *listing, const char *password)
 const char *p2p_take_clipboard_text(void)
 {
 	return NULL;
-}
-
-void p2p_set_game_player_counts(int count, int maximum)
-{
-	(void)count;
-	(void)maximum;
 }
 
 /* ---------- what players are known by */

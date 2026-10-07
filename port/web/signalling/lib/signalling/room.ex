@@ -85,6 +85,27 @@ defmodule Signalling.Room do
   # room ends at once, without waiting for it
   def host_left(room), do: GenServer.cast(room, {:host_left, self()})
 
+  # the calling host's page tells of its game as it is now (Page's
+  # check_game: name, map, gametype, engine, open, in_progress, teams,
+  # players, maximum_players)
+  def game(room, game), do: GenServer.cast(room, {:game, self(), game})
+
+  # every room as it is now (NETWORK.md, "The room's game"): the server's
+  # /stats. (A room that does not answer at once is left out)
+  def all do
+    Registry.select(Signalling.Rooms, [{{:_, :"$1", :_}, [], [:"$1"]}])
+    |> Task.async_stream(&GenServer.call(&1, :state, 1000),
+      timeout: 2000,
+      on_timeout: :kill_task,
+      ordered: false
+    )
+    |> Enum.flat_map(fn
+      {:ok, state} -> [state]
+      _ -> []
+    end)
+    |> Enum.sort_by(& &1.created_at)
+  end
+
   # the calling page joins the room: {:ok, %{room, peer, host}}, the host's
   # id, net_version and SFU session
   def join(code, id, net_version, secret) do
@@ -141,7 +162,20 @@ defmodule Signalling.Room do
     # joiners: page => %{peer, id, net_version, monitor, channels, session};
     # one the server knows only from its host's rehost (it restarted) is
     # {:ghost, peer} => the same, with no monitor and no channels
-    {:ok, Map.merge(room, %{session: nil, ready: false, joiners: %{}, grace: grace})}
+    # game: what the host's page says of its game (nil until it does);
+    # match_started_at: when its match started (nil between matches)
+    {:ok,
+     Map.merge(room, %{
+       session: nil,
+       ready: false,
+       joiners: %{},
+       grace: grace,
+       created_at: now(),
+       game: nil,
+       game_updated_at: nil,
+       match_started_at: nil,
+       matches: 0
+     })}
   end
 
   @impl true
@@ -223,6 +257,27 @@ defmodule Signalling.Room do
     end
   end
 
+  def handle_call(:state, _from, room) do
+    joiners = Map.values(room.joiners)
+
+    state = %{
+      room: room.code,
+      created_at: room.created_at,
+      host: if(room.host, do: "connected", else: "reconnecting"),
+      net_version: room.net_version,
+      # the machines in the room: the host and its linked joiners (a ghost:
+      # one the room knows from its host's rehost)
+      machines: 1 + Enum.count(joiners, &(&1.channels || &1.monitor == nil)),
+      joining: Enum.count(joiners, &(&1.channels == nil and &1.monitor != nil)),
+      game: room.game,
+      game_updated_at: room.game_updated_at,
+      match_started_at: room.match_started_at,
+      matches: room.matches
+    }
+
+    {:reply, state, room}
+  end
+
   def handle_call({:rehost, page, secret, id, net_version, session, peers}, _from, room) do
     cond do
       not (Plug.Crypto.secure_compare(secret, room.secret) and id == room.id) ->
@@ -264,6 +319,22 @@ defmodule Signalling.Room do
 
   def handle_cast({:gone, page, reason}, room), do: {:noreply, remove(room, page, reason)}
 
+  def handle_cast({:game, page, game}, %{host: page} = room) do
+    was = room.game != nil and room.game.in_progress
+
+    {started, matches} =
+      cond do
+        game.in_progress and not was -> {now(), room.matches + 1}
+        game.in_progress -> {room.match_started_at, room.matches}
+        true -> {nil, room.matches}
+      end
+
+    {:noreply,
+     %{room | game: game, game_updated_at: now(), match_started_at: started, matches: matches}}
+  end
+
+  def handle_cast({:game, _, _}, room), do: {:noreply, room}
+
   def handle_cast({:host_left, page}, %{host: page} = room), do: close(room)
   def handle_cast({:host_left, _}, room), do: {:noreply, room}
 
@@ -288,6 +359,8 @@ defmodule Signalling.Room do
 
     {:stop, :normal, room}
   end
+
+  defp now, do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
 
   # how long a room waits for its host to come back
   defp wait do

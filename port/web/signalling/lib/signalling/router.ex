@@ -1,6 +1,6 @@
 # /net/rooms/new (host) and /net/rooms/<room> (join), as the Worker's
 # handleRooms (worker/rooms.js); /net/online, the online count and the
-# lobby's chat; and /healthz.
+# lobby's chat; /healthz; and /stats, the rooms' games (on the machine only).
 defmodule Signalling.Router do
   @moduledoc false
   use Plug.Router
@@ -18,6 +18,22 @@ defmodule Signalling.Router do
 
   get "/healthz" do
     send_resp(conn, 200, "ok #{Registry.count(Signalling.Rooms)}\n")
+  end
+
+  # every room and its game, as JSON (NETWORK.md, "The room's game"). Only
+  # on the machine: the relay passes /net/rooms/ and /net/online on, not this
+  get "/stats" do
+    rooms = Room.all()
+
+    stats = %{
+      at: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
+      online: Signalling.OnlineCount.current(),
+      rooms: rooms
+    }
+
+    conn
+    |> put_resp_content_type("application/json")
+    |> send_resp(200, JSON.encode!(stats))
   end
 
   get "/net/rooms/:name" do

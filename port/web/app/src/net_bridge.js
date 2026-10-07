@@ -19,6 +19,8 @@ A transport has:
 	hosting(isHosting)            optional: the game started or stopped hosting
 	join(text)                    optional: join the room of a browser's invite
 	                              (the game's menus' Direct Link)
+	game(state)                   optional: the hosted game as it is now
+	                              (readGame), as it changes
 Links are numbered 0 to 127 by the transport; identifiers are the 6 bytes
 the machines' XNADDRs carry.
 */
@@ -37,7 +39,36 @@ const IN_RING = OUT_RING + 16 + RING_SIZE;
 const RING_DATA = 16;
 
 /* the records each way */
-const OUT_TYPES = ["reliable", "unreliable", "hosting", "not-hosting", "join"];
+const OUT_TYPES = ["reliable", "unreliable", "hosting", "not-hosting", "join", "game"];
+/* struct web_game_state (web_p2p.c): engine, flags, players, maximum
+players, then the name, map and game type, each NUL-padded */
+const GAME_TEXTS = [["name", 4, 32], ["map", 36, 32], ["gametype", 68, 48]];
+const GAME_SIZE = 116;
+/* the game engines, by index (game_engine_index: 0 is co-op's) */
+const ENGINES = ["coop", "ctf", "slayer", "oddball", "king", "race"];
+
+/* the hosted game, from a "game" record: { name, map, gametype, engine,
+open, inProgress, teams, players, maximumPlayers } */
+export function readGame(body) {
+	if (body.length < GAME_SIZE) {
+		return null;
+	}
+	const decoder = new TextDecoder();
+	const game = {
+		engine: ENGINES[body[0]] || `engine-${body[0]}`,
+		open: (body[1] & 1) !== 0,
+		inProgress: (body[1] & 2) !== 0,
+		teams: (body[1] & 4) !== 0,
+		players: body[2],
+		maximumPlayers: body[3],
+	};
+	for (const [name, offset, size] of GAME_TEXTS) {
+		const bytes = body.subarray(offset, offset + size);
+		const end = bytes.indexOf(0);
+		game[name] = decoder.decode(end < 0 ? bytes : bytes.subarray(0, end));
+	}
+	return game;
+}
 const IN_TYPES = { "link-up": 0, "link-down": 1, reliable: 2, unreliable: 3 };
 /* records from the transport held while the ring to the game is full;
 past this many, unreliable ones are lost */
@@ -99,6 +130,11 @@ export function startNetBridge(module, transport) {
 			} else if (type === "join") {
 				/* (a browser's invite, from the game's menus: Direct Link) */
 				transport.join?.(new TextDecoder().decode(body));
+			} else if (type === "game") {
+				const game = readGame(body);
+				if (game) {
+					transport.game?.(game);
+				}
 			} else if (type) {
 				transport.hosting?.(type === "hosting");
 			}

@@ -616,3 +616,93 @@ test("a host's page that comes back replaces the one the server still has", reho
 	await sleep(200);
 	assert.equal(again.closed, null);
 });
+
+/* ---------- the room's game (the Worker's rooms keep none) */
+
+const gameOf = (extra = {}) => ({ type: "game", name: "New001", map: "bloodgulch", gametype: "Slayer",
+	engine: "slayer", open: true, inProgress: false, teams: false, players: 1, maximumPlayers: 16, ...extra });
+
+async function stats() {
+	return (await fetch(`${ORIGIN}/stats`)).json();
+}
+
+test("a host's game is kept by its room, as /stats shows", { skip: SERVER !== "elixir" }, async () => {
+	newAddress();
+	const hostPage = await host();
+	await joiner(hostPage, 1);
+	await hostPage.next("link");
+	const room = async () => (await stats()).rooms.find((entry) => entry.room === hostPage.welcome.room);
+
+	let state = await room();
+	assert.equal(state.game, null);
+	assert.equal(state.host, "connected");
+	assert.equal(state.machines, 2);
+	assert.match(state.created_at, /^\d{4}-\d\d-\d\dT/);
+
+	/* the lobby, then a match, then the lobby again, then the next match */
+	hostPage.send(gameOf());
+	await sleep(250);
+	state = await room();
+	assert.deepEqual(state.game, { name: "New001", map: "bloodgulch", gametype: "Slayer", engine: "slayer",
+		open: true, in_progress: false, teams: false, players: 1, maximum_players: 16 });
+	assert.equal(state.match_started_at, null);
+	assert.equal(state.matches, 0);
+
+	hostPage.send(gameOf({ inProgress: true, players: 2 }));
+	await sleep(250);
+	state = await room();
+	assert.equal(state.game.players, 2);
+	assert.match(state.match_started_at, /^\d{4}-/);
+	assert.equal(state.matches, 1);
+	const started = state.match_started_at;
+
+	hostPage.send(gameOf({ inProgress: true, players: 3 }));
+	await sleep(250);
+	state = await room();
+	assert.equal(state.match_started_at, started);
+	assert.equal(state.matches, 1);
+
+	hostPage.send(gameOf({ inProgress: false }));
+	await sleep(250);
+	assert.equal((await room()).match_started_at, null);
+	hostPage.send(gameOf({ inProgress: true }));
+	await sleep(250);
+	assert.equal((await room()).matches, 2);
+
+	/* the room ends with its host */
+	hostPage.socket.close();
+	await until(() => hostPage.closed);
+	await sleep(200);
+	assert.equal(await room(), undefined);
+});
+
+test("a game told too often is let go, and one malformed or not the host's refused", { skip: SERVER === "worker" }, async () => {
+	newAddress();
+	const hostPage = await host();
+	const page_ = await joiner(hostPage, 1);
+	await hostPage.next("link");
+	page_.send(gameOf());
+	await page_.error("protocol");
+	await hostPage.next("unlink");
+
+	hostPage.send(gameOf({ players: 300 }));
+	await hostPage.error("protocol");
+
+	const again = await host();
+	again.send(gameOf({ name: "x".repeat(40) }));
+	await again.error("protocol");
+
+	const third = await host();
+	third.send(gameOf({ players: 1 }));
+	third.send(gameOf({ players: 2 }));
+	await sleep(250);
+	if (SERVER === "elixir") {
+		const state = (await stats()).rooms.find((entry) => entry.room === third.welcome.room);
+		assert.equal(state.game.players, 1);
+	}
+	assert.equal(third.closed, null);
+});
+
+test("/stats is not reachable through the relay", { skip: SERVER !== "machine" }, async () => {
+	assert.equal((await fetch(`${ORIGIN}/stats`)).status, 404);
+});

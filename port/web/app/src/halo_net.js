@@ -25,6 +25,11 @@ links and its SFU session stay as they were, and the invite keeps working.
 onSignalling(up) tells it: false as it is lost, true as it is back. Only a
 refusal that trying again would not change (or the SFU's connection
 failing) ends it.
+
+A host tells its room of its game with session.game(state) (net_bridge.js's
+readGame), as it changes: sent at most once a second, and again after a
+rehost. Only the server of port/web/signalling takes it (the Worker's rooms
+would refuse it: a welcome with a hostKey is that server's).
 */
 
 const PROTOCOL_VERSION = 1;
@@ -35,6 +40,8 @@ const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000];
 /* a rehost's refusals that trying again would not change (the Worker's
 rooms know no rehost: "protocol") */
 const FINAL_REFUSALS = new Set(["secret", "version", "protocol"]);
+/* at most one game message a second */
+const GAME_INTERVAL = 1000;
 const RTC_CONFIGURATION = {
 	iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }],
 	bundlePolicy: "max-bundle",
@@ -114,6 +121,10 @@ function connect({
 	let reconnects = 0;
 	let reconnectTimer = 0;
 	let reconnecting = false;
+	/* the host's game, the latest, and when it was last sent */
+	let game = null;
+	let gameTimer = 0;
+	let gameSent = 0;
 	let resolveConnect;
 	let rejectConnect;
 	const connected = new Promise((resolve, reject) => {
@@ -131,6 +142,13 @@ function connect({
 		drop(peer) {
 			send({ type: "drop", peer });
 		},
+		/* host only: the game as it is now (sent as "game") */
+		game(state) {
+			game = state;
+			if (!gameTimer) {
+				gameTimer = setTimeout(sendGame, Math.max(0, gameSent + GAME_INTERVAL - Date.now()));
+			}
+		},
 		/* leaves the game: the signalling and every link */
 		close() {
 			end(null);
@@ -142,6 +160,16 @@ function connect({
 		if (socket.readyState === WebSocket.OPEN) {
 			socket.send(JSON.stringify(message));
 		}
+	}
+
+	/* the host's game to its room (the latest; none until there is one) */
+	function sendGame() {
+		gameTimer = 0;
+		if (!game || !hosting || !hostKey || reconnecting || !socket || socket.readyState !== WebSocket.OPEN) {
+			return;
+		}
+		gameSent = Date.now();
+		send({ type: "game", ...game });
 	}
 
 	function settle() {
@@ -160,6 +188,7 @@ function connect({
 		closed = true;
 		clearTimeout(timeout);
 		clearTimeout(reconnectTimer);
+		clearTimeout(gameTimer);
 		clearInterval(ping);
 		socket?.close();
 		if (!settled) {
@@ -285,6 +314,8 @@ function connect({
 					reconnecting = false;
 					reconnects = 0;
 					onSignalling(true);
+					/* (the room made again knows nothing of the game) */
+					sendGame();
 				}
 				break;
 			case "offer":

@@ -40,6 +40,8 @@ export function sfuTransport({ invite = null, onStatus = () => {} } = {}) {
 	let session = null;
 	let role = null;
 	let reconnecting = false;
+	/* the hosted game, the latest (net_bridge.js's readGame), for the room */
+	let game = null;
 	/* each new session; one that ended before it connected is let go */
 	let generation = 0;
 
@@ -115,6 +117,9 @@ export function sfuTransport({ invite = null, onStatus = () => {} } = {}) {
 				return;
 			}
 			session = started;
+			if (newRole === "host" && game) {
+				session.game(game);
+			}
 			status(newRole === "host" ? "hosting" : "joined");
 		} catch (error) {
 			if (mine === generation) {
@@ -150,6 +155,13 @@ export function sfuTransport({ invite = null, onStatus = () => {} } = {}) {
 			} else if (!isHosting && role === "host") {
 				leave();
 				status("idle");
+			}
+		},
+		/* the hosted game changed: its room is told */
+		game(state) {
+			game = state;
+			if (role === "host" && session) {
+				session.game(state);
 			}
 		},
 		/* joins the room of an invite (a link, or <room>.<secret>) */

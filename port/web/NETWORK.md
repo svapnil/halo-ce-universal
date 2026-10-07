@@ -47,7 +47,7 @@ is not in git. When a decision changes, update this list.
 | 2 | A browser's invite is `https://<site>/#join=<room>.<secret>`. | `halo://join/...` | A link anyone can open in a browser. The secret is in the fragment, which is never sent to a server. | "Rooms and invites" |
 | 3 | A page hosts for browsers only. Desktop builds cannot join a browser's game. | Any desktop build can host anyone. | Hosting desktop players would put every joiner's traffic through the relay, and a host page in a background tab would slow the game for everyone. | `web_p2p_select.c` (`p2p_native_set_hosting_allowed(0)`) |
 | 4 | A page joins desktop builds' games (by invite, Direct Link or the Server Browser) by running upstream's `p2p.c` unchanged, with its sockets lent by our relay on Fly.io. | Direct sockets. | The browser speaks the desktop's protocol exactly, so it keeps working as upstream changes it. | "Native games" |
-| 5 | A browser's room is never listed in the Server Browser. Server Setup hides LISTING and PASSWORD, and `p2p_set_hosting_public`, `p2p_set_hosting_password` and `p2p_set_game_listing` keep nothing. | Public lobbies, with a password since network version 20. | Desktop builds could not join a listed browser room (see 3). Listing browsers' rooms for other browsers is a to-do. | `menu_functions.c` (`server_settings_update`), `web_p2p.c` |
+| 5 | A browser's room is never listed in the Server Browser. Server Setup hides LISTING and PASSWORD, and `p2p_set_hosting_public` and `p2p_set_hosting_password` keep nothing; `p2p_set_game_listing` goes to our signalling server only (see 17). | Public lobbies, with a password since network version 20. | Desktop builds could not join a listed browser room (see 3). Listing browsers' rooms for other browsers is a to-do. | `menu_functions.c` (`server_settings_update`), `web_p2p.c` |
 | 6 | A browser can join a desktop build's password-protected public game. The game's own text field asks for the password. | The same. | Matches upstream. | `web_p2p_select.c` (`p2p_listing_unlock`) |
 | 7 | A host starts its game alone, in any game type, and the players it invites join the game in progress. The first game of an internet host starts as soon as Server Setup's START GAME is pressed: no lobby, no countdown. After each game's scores the host is back in the lobby, as upstream, and starts the next from there (the room stays open). | The game waits in the lobby for its minimum players (and teams), then counts down. | A friend opening an invite should be playing at once, and a room should be a game being played (decided 2026-10-06; the lobby between games was the owner's choice, over starting the next game on its own). | `network_server_manager.c` (`server_ok_to_countdown`, `network_game_server_game_can_start`), `menu_functions.c` (`server_start`, `web_host_start_update`), "The lobby" |
 | 8 | A page opened with an invite (`#join=` or `#native=`) skips the menus. It joins the game in progress from the main menu, then opens the menus' lobby. | The player joins through the menus, or from the clipboard at start-up. | One click from an invite to playing. | `src/web_lobby.c`, `app/src/lobby.js` |
@@ -59,6 +59,7 @@ is not in git. When a decision changes, update this list.
 | 14 | No Discord identity and no hardware id: `p2p_discord_identity` and `p2p_hardware_id` give empty values for browsers. | Discord name and id, hardware id. | A page has neither. | `web_p2p.c` |
 | 15 | A lobby beside the game, outside it: how many browsers have the site open, and a chat between them, using the player's profile name. | None. | The fork's own feature. | "The online count", "The lobby's chat" |
 | 16 | A page in a background tab keeps playing on a 33 ms timer. | The game runs at full speed. | Browsers throttle hidden pages, and a host that stopped would freeze its game for everyone. | `sdl_platform.c` (`web_wait_for_frame`) |
+| 17 | No cross-platform play for games hosted in a browser: they are for browsers only, and what the game says of itself (`p2p_set_game_listing`, `p2p_set_game_player_counts`: its map, game type, players, whether a match is on) goes to our signalling server's room only, for its live state (`/stats`), never to the MQTT brokers or the desktop Server Browser. | The same two functions list a public game in every desktop build's Server Browser, and feed Discord. | The owner's invariant (2026-10-06): browser-hosted games stay browser-only, and the server keeps a live model of them. | `web_p2p.c` ("the hosted game"), "The room's game" |
 
 If upstream changes any of these on its side, the browser build may need a
 matching change (in `web_p2p.c`, `web_p2p_select.c`, the relay or the page),
@@ -161,6 +162,7 @@ without a word to the room.
 | `rehost` | `version`, `id`, `netVersion`, `hostKey`, `session`, `peers` | First message, on `/net/rooms/<room>`: the host's page again, its WebSocket having been lost ("Rooms and invites"). `session` is its SFU session (the `offer`'s), `peers` its links, `[{peer, id}]`. Answered with `welcome` only: no `offer`, the page being connected already. |
 | `answer` | `sdp` | The page's answer to `offer`. |
 | `drop` | `peer` | Host only: end that joiner's link (a kick or ban in the game). |
+| `game` | `name`, `map`, `gametype`, `engine`, `open`, `inProgress`, `teams`, `players`, `maximumPlayers` | Host only, as its game changes (at most once a second; the server takes at most 5): its game as it is now ("The room's game"). Only this repository's server takes it: the Worker's rooms refuse it (`protocol`), and the page sends it only to a server whose `welcome` had a `hostKey`. |
 
 ### Server to page
 
@@ -379,7 +381,7 @@ moves `head`, the reader `tail`.
 
 | Way | Types | Wakes the other side by |
 | --- | --- | --- |
-| game to page | 0 reliable, 1 unreliable (the bytes of a channel's message), 2 hosting, 3 not hosting | raising `out_sequence` and notifying it (the page waits with `Atomics.waitAsync`) |
+| game to page | 0 reliable, 1 unreliable (the bytes of a channel's message), 2 hosting, 3 not hosting, 4 join (an invite's text), 5 game (`struct web_game_state`: u8 engine, u8 flags (1 open, 2 in progress, 4 teams), u8 players, u8 maximum players, then the name (32 bytes), map (32) and game type (48), NUL-padded) | raising `out_sequence` and notifying it (the page waits with `Atomics.waitAsync`) |
 | page to game | 0 link up (the peer's identifier), 1 link down, 2 reliable, 3 unreliable | calling `web_p2p_wake()`, which sends a datagram to the thread's wake socket |
 
 When the ring to the game is full, the page holds its records (and drops
@@ -635,6 +637,44 @@ values in the environment), and `SIGNALLING_URL=http://localhost:8791` in
 its own, and runs against the Worker's rooms too (`SERVER=worker`), so that
 the two stay the same to a page, and against Fly.io's image
 (`SERVER=machine`).
+
+### The room's game
+
+The server keeps a live model of each browser-hosted game, in its room's
+process (memory only, as the rooms: a restart forgets it until the hosts
+come back and tell it again):
+
+- **From the game.** The game's server says what its game is each tick,
+  through `p2p.h`, as for the desktop's Server Browser and Discord:
+  `p2p_set_game_listing` (its name, map, game type, engine, open to joiners,
+  a match in progress, teams) and `p2p_set_game_player_counts` (players,
+  and the most it takes: Server Setup's MAXIMUM PLAYERS). `web_p2p.c` keeps
+  them and tells the page as they change (the bridge's `game` record);
+  `net_bridge.js` reads it (`readGame`), and the host's page sends it to its
+  room (`game`, at most once a second, and again after a `rehost`). None of
+  it reaches the brokers or desktop builds (refer to row 17 of "How it
+  differs from upstream's").
+- **In the room** (`Signalling.Room`): the game as last told, when; when the
+  room was made (at START GAME: "The lobby"); when the match in progress
+  started (`match_started_at`, set as `in_progress` turns on, nil between
+  matches), and how many matches have started; the host's state
+  (`connected`, or `reconnecting` while its room waits for it); and its
+  machines (the host and its linked joiners; a split-screen machine is
+  one, the game's `players` counts each player).
+- **`GET /stats`**, JSON: the time, the online count, and each room as
+  above (its code, not its secret). Only on the machine: the signalling
+  listens on 127.0.0.1, and the relay passes `/net/rooms/` and `/net/online`
+  on, not this (`fly ssh console -C "curl -s localhost:8791/stats"`).
+- **What it is worth.** The host's page says it: a page changed by its
+  player could say anything, within the server's checks (each field's type
+  and size). Good for counting and watching, not for trusting.
+
+Measured (2026-10-06), locally, a host's game in a headless Chrome
+(`HALO_NETWORK_TEST=host:bloodgulch`, which skips Server Setup: no game
+type's text, 128 players at most) and `/stats` every 3 seconds: the room
+with no game, then its lobby (Blood Gulch, slayer, 1 player), then its
+match (in progress, `match_started_at` set, 1 match) as the game started,
+then 2 machines and 2 players as a second page joined with the invite.
 
 ### The online count
 

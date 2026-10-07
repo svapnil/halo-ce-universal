@@ -152,6 +152,24 @@ defmodule Signalling.Page do
   defp message("answer", _, %{stage: :offered}),
     do: {:error, "protocol", "An answer needs its sdp"}
 
+  # the host's game as it is now: its room keeps it (NETWORK.md, "The
+  # room's game"). At most 5 a second are taken; more are let go
+  defp message("game", data, %{stage: :ready, role: :host} = page) do
+    now = System.monotonic_time(:millisecond)
+
+    with {:ok, game} <- check_game(data) do
+      # (monotonic time may be below zero: nil, none yet)
+      last = Map.get(page, :game_at)
+
+      if last == nil or now - last >= 200 do
+        Room.game(page.room, game)
+        {:ok, [], Map.put(page, :game_at, now)}
+      else
+        {:ok, [], page}
+      end
+    end
+  end
+
   defp message("drop", data, %{stage: :ready, role: :host} = page) do
     Room.drop(page.room, data["peer"])
     {:ok, [], page}
@@ -169,6 +187,45 @@ defmodule Signalling.Page do
 
       true ->
         :ok
+    end
+  end
+
+  @engines ~w(coop ctf slayer oddball king race)
+
+  # a game message's fields, as net_bridge.js's readGame makes them
+  defp check_game(data) do
+    texts =
+      for {name, size} <- [{"name", 31}, {"map", 31}, {"gametype", 47}],
+          do: {name, data[name], size}
+
+    counts = for name <- ["players", "maximumPlayers"], do: data[name]
+    flags = for name <- ["open", "inProgress", "teams"], do: data[name]
+
+    valid =
+      Enum.all?(texts, fn {_, text, size} ->
+        is_binary(text) and byte_size(text) <= size and String.printable?(text)
+      end) and
+        Enum.all?(counts, &(is_integer(&1) and &1 in 0..255)) and
+        Enum.all?(flags, &is_boolean/1) and
+        (data["engine"] in @engines or
+           (is_binary(data["engine"]) and data["engine"] =~ ~r/^engine-\d{1,3}$/))
+
+    if valid do
+      {:ok,
+       %{
+         name: data["name"],
+         map: data["map"],
+         gametype: data["gametype"],
+         engine: data["engine"],
+         open: data["open"],
+         in_progress: data["inProgress"],
+         teams: data["teams"],
+         players: data["players"],
+         maximum_players: data["maximumPlayers"]
+       }}
+    else
+      {:error, "protocol",
+       "Expected a game: name, map, gametype, engine, open, inProgress, teams, players, maximumPlayers"}
     end
   end
 
