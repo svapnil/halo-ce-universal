@@ -708,7 +708,7 @@ function NetStatus({ net }) {
 	const players = `${net.players} ${net.players === 1 ? "player" : "players"}`;
 	const text = {
 		connecting: "Connecting…",
-		hosting: `Hosting · ${players}`,
+		hosting: net.reconnecting ? `Hosting · ${players} · reconnecting…` : `Hosting · ${players}`,
 		/* (the host's game is then in Multiplayer, System Link) */
 		joined: "Connected to the host",
 		error: `Network: ${net.error}`,

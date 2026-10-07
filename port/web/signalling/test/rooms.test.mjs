@@ -29,6 +29,8 @@ const PORT = 8796;
 const SFU_PORT = 8795;
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const ANSWER_TIMEOUT = 1500;
+/* how long a room waits for a host whose WebSocket was lost */
+const HOST_GRACE = 1500;
 /* (32 as deployed: more than an address's rooms and joins of one minute) */
 const PAGES_AT_ONCE = 20;
 const WEB = new URL("../..", import.meta.url).pathname;
@@ -84,6 +86,7 @@ function start() {
 	const settings = {
 		SIGNALLING_PORT: String(PORT), SIGNALLING_ORIGINS: ORIGIN, SFU_API: sfuApi,
 		SIGNALLING_ANSWER_TIMEOUT: String(ANSWER_TIMEOUT), SIGNALLING_PAGES_AT_ONCE: String(PAGES_AT_ONCE),
+		SIGNALLING_HOST_GRACE: String(HOST_GRACE),
 		REALTIME_APP_ID: "test", REALTIME_APP_TOKEN: "token",
 	};
 	if (SERVER === "machine") {
@@ -232,6 +235,13 @@ async function joiner(hostPage, number = 1) {
 	page_.offer = await page_.next("offer");
 	page_.send({ type: "answer", sdp: "a joiner's answer" });
 	page_.link = await page_.next("link");
+	return page_;
+}
+
+/* the host's page again, its WebSocket lost: its room back (rehost) */
+async function rehost(hostPage, { peers = [], hostKey = hostPage.welcome.hostKey, id = HOST_ID } = {}) {
+	const page_ = await page(hostPage.welcome.room);
+	page_.send(hello("rehost", id, { hostKey, session: hostPage.offer.session, peers }));
 	return page_;
 }
 
@@ -486,4 +496,123 @@ test("an address has only so many pages at once", { skip: SERVER === "worker" },
 	const next = await page("ZZZZZZZZ");
 	next.send("ping");
 	await until(() => next.texts.length);
+});
+
+/* ---------- a host whose WebSocket is lost (the Worker's rooms know no rehost) */
+
+const rehostOptions = { skip: SERVER === "worker" };
+
+test("a host whose WebSocket is lost comes back to its room, and its joiners are not told", rehostOptions, async () => {
+	newAddress();
+	const hostPage = await host();
+	assert.match(hostPage.welcome.hostKey, /^[A-Za-z0-9_-]{22}$/);
+	assert.equal(hostPage.offer.session, hostPage.offer.sdp.slice("offer for ".length));
+	const first = await joiner(hostPage, 1);
+	await hostPage.next("link");
+
+	/* (no close frame: as a network that drops) */
+	hostPage.socket.terminate();
+	await sleep(300);
+	assert.equal(first.closed, null);
+	assert.equal(first.messages.length, 2 + 1, JSON.stringify(first.messages));
+
+	/* a joiner meanwhile is told to try again */
+	const early = await page(hostPage.welcome.room);
+	early.send(hello("join", joinerId(2), { secret: hostPage.welcome.secret }));
+	await early.error("not-ready");
+
+	const again = await rehost(hostPage, { peers: [{ peer: 1, id: joinerId(1) }] });
+	assert.deepEqual(await again.next("welcome"),
+		{ type: "welcome", room: hostPage.welcome.room, peer: 0, secret: hostPage.welcome.secret });
+
+	/* the room takes joiners again, through the host's same session */
+	again.welcome = hostPage.welcome;
+	const second = await joiner(again, 2);
+	assert.equal(second.welcome.peer, 2);
+	assert.equal((await again.next("link")).peer, 2);
+	/* and the page that came back hears of its first joiner's end */
+	first.socket.close();
+	assert.deepEqual(await again.next("unlink"), { type: "unlink", peer: 1, reason: "left" });
+	await until(() => called("PUT", /datachannels\/close$/).some((call) => call.path === `/sessions/${hostPage.offer.session}/datachannels/close`));
+});
+
+test("a room waits for its host only so long", rehostOptions, async () => {
+	newAddress();
+	const hostPage = await host();
+	const first = await joiner(hostPage, 1);
+	hostPage.socket.terminate();
+	await sleep(HOST_GRACE / 2);
+	assert.equal(first.closed, null);
+	await first.error("closed");
+});
+
+test("a host that leaves ends its room at once", rehostOptions, async () => {
+	newAddress();
+	const hostPage = await host();
+	const first = await joiner(hostPage, 1);
+	hostPage.socket.close();
+	await first.error("closed");
+	await until(() => first.closed, HOST_GRACE / 2);
+});
+
+test("a room the server no longer has is made again by its host, with its links", rehostOptions, async () => {
+	newAddress();
+	const hostPage = await host();
+	await joiner(hostPage, 1);
+	await joiner(hostPage, 2);
+	hostPage.socket.terminate();
+	/* (the room gone, as after a restart) */
+	await sleep(HOST_GRACE + 300);
+
+	const again = await rehost(hostPage, { peers: [{ peer: 1, id: joinerId(1) }, { peer: 2, id: joinerId(2) }] });
+	assert.deepEqual(await again.next("welcome"),
+		{ type: "welcome", room: hostPage.welcome.room, peer: 0, secret: hostPage.welcome.secret });
+	again.welcome = hostPage.welcome;
+
+	/* the host's links keep their numbers */
+	const third = await joiner(again, 3);
+	assert.equal(third.welcome.peer, 3);
+	assert.equal((await again.next("link")).peer, 3);
+
+	/* a machine that comes back takes its old link's place */
+	const back = await joiner(again, 1);
+	assert.deepEqual(await again.next("unlink"), { type: "unlink", peer: 1, reason: "left" });
+	assert.equal(back.welcome.peer, 1);
+	assert.equal((await again.next("link")).peer, 1);
+
+	/* a link that ends on the host's side frees its number */
+	again.send({ type: "drop", peer: 2 });
+	assert.deepEqual(await again.next("unlink"), { type: "unlink", peer: 2, reason: "dropped" });
+	const fourth = await joiner(again, 4);
+	assert.equal(fourth.welcome.peer, 2);
+});
+
+test("only the host's key takes its room back", rehostOptions, async () => {
+	newAddress();
+	const hostPage = await host();
+	hostPage.socket.terminate();
+	await sleep(100);
+	/* a joiner has the secret, not the key */
+	const joinerTry = await rehost(hostPage, { hostKey: hostPage.welcome.secret });
+	await joinerTry.error("secret");
+	const otherMachine = await rehost(hostPage, { id: joinerId(9) });
+	await otherMachine.error("secret");
+	const malformed = await rehost(hostPage, { hostKey: "short" });
+	await malformed.error("protocol");
+	const again = await rehost(hostPage);
+	await again.next("welcome");
+});
+
+test("a host's page that comes back replaces the one the server still has", rehostOptions, async () => {
+	newAddress();
+	const hostPage = await host();
+	const again = await rehost(hostPage);
+	await again.next("welcome");
+	await hostPage.error("replaced");
+	again.welcome = hostPage.welcome;
+	await joiner(again, 1);
+	assert.equal((await again.next("link")).peer, 1);
+	/* the old page's end does not end the room */
+	await sleep(200);
+	assert.equal(again.closed, null);
 });

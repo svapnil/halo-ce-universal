@@ -184,6 +184,9 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 				if (hosted && hosted !== net.invite) {
 					console.log(`room: hosting, invite ${hosted}`);
 				}
+				if (!!status.reconnecting !== !!net.reconnecting) {
+					console.log(status.reconnecting ? "room: the signalling is lost, connecting again" : "room: the signalling is back");
+				}
 				writeText(module, roomInvite, 256, hosted);
 				net = status;
 				report();

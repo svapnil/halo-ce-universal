@@ -14,8 +14,10 @@ worker/rooms.js; NETWORK.md).
 A link's number is the peer's in the room (the host is 0, joiners 1 to
 15), so a host has a link to each joiner, and a joiner one, to the host.
 
-onStatus gets { state, invite, players, error }: state is "idle",
-"connecting", "hosting", "joined" or "error".
+onStatus gets { state, invite, players, error, reconnecting }: state is
+"idle", "connecting", "hosting", "joined" or "error"; reconnecting is true
+while a host's signalling is lost and it connects again (halo_net.js: its
+game, links and invite go on meanwhile).
 */
 
 import { hostGame, joinGame } from "./halo_net.js";
@@ -37,11 +39,12 @@ export function sfuTransport({ invite = null, onStatus = () => {} } = {}) {
 	let bridge;
 	let session = null;
 	let role = null;
+	let reconnecting = false;
 	/* each new session; one that ended before it connected is let go */
 	let generation = 0;
 
 	function status(state, extra = {}) {
-		onStatus({ state, invite: session?.invite || null, players: links.size + 1, error: null, ...extra });
+		onStatus({ state, invite: session?.invite || null, players: links.size + 1, error: null, reconnecting, ...extra });
 	}
 
 	function attach(link) {
@@ -72,6 +75,7 @@ export function sfuTransport({ invite = null, onStatus = () => {} } = {}) {
 		session?.close();
 		session = null;
 		role = null;
+		reconnecting = false;
 		for (const peer of [...links.keys()]) {
 			detach(peer);
 		}
@@ -87,8 +91,22 @@ export function sfuTransport({ invite = null, onStatus = () => {} } = {}) {
 			netVersion: bridge.netVersion,
 			onLink: (link) => mine === generation && attach(link),
 			onUnlink: (peer) => mine === generation && detach(peer),
-			/* the signalling ended: links stay, but no one else joins */
-			onClose: (error) => error && mine === generation && status("error", { error: error.message }),
+			/* the signalling ended: links stay, but no one else joins. (A
+			joiner's room that ends, "closed", is no error: its link to the
+			host goes on, and the game sees for itself if the host is gone) */
+			onClose: (error) => {
+				reconnecting = false;
+				if (error && mine === generation && !(role === "join" && error.code === "closed")) {
+					status("error", { error: error.message });
+				}
+			},
+			/* a host's signalling lost, and back (halo_net.js) */
+			onSignalling: (up) => {
+				if (mine === generation) {
+					reconnecting = !up;
+					status(role === "host" ? "hosting" : "joined");
+				}
+			},
 		};
 		try {
 			const started = await start(callbacks);

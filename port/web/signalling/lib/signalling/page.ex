@@ -73,17 +73,53 @@ defmodule Signalling.Page do
 
   def handle_info(_, page), do: {:ok, page}
 
+  # a host's page that closed its WebSocket (or failed) has left its room;
+  # one whose WebSocket was lost may come back to it (Room.rehost)
   @impl true
+  def terminate(reason, %{role: :host, room: room})
+      when is_pid(room) and reason in [:normal, :remote],
+      do: Room.host_left(room)
+
   def terminate(_, _), do: :ok
 
   # ---------- the messages: {:ok, what to send, the page} or {:error, code, why}
 
   defp message("host", data, %{stage: :new, role: :host} = page) do
     with :ok <- check_hello(data),
-         {:ok, room, secret} <- Room.open(page.code, data["id"], data["netVersion"]) do
+         {:ok, room, secret, host_key} <- Room.open(page.code, data["id"], data["netVersion"]) do
       send(self(), :offer)
-      welcome = %{type: "welcome", room: page.code, peer: @host_peer, secret: secret}
+
+      welcome = %{
+        type: "welcome",
+        room: page.code,
+        peer: @host_peer,
+        secret: secret,
+        hostKey: host_key
+      }
+
       {:ok, [welcome], %{page | stage: :welcomed, peer: @host_peer, room: room}}
+    end
+  end
+
+  # the host's page again, on /net/rooms/<room>, its WebSocket having been
+  # lost: its SFU session (and links) are as they were, so it is ready at once
+  defp message("rehost", data, %{stage: :new, role: :join} = page) do
+    with :ok <- check_hello(data),
+         {:ok, session, peers} <- check_rehost(data),
+         {:ok, room, secret} <-
+           Room.rehost(page.code, data["hostKey"], data["id"], data["netVersion"], session, peers) do
+      welcome = %{type: "welcome", room: page.code, peer: @host_peer, secret: secret}
+
+      {:ok, [welcome],
+       %{
+         page
+         | role: :host,
+           stage: :ready,
+           peer: @host_peer,
+           room: room,
+           session: session,
+           timer: nil
+       }}
     end
   end
 
@@ -136,6 +172,33 @@ defmodule Signalling.Page do
     end
   end
 
+  # a rehost's host key, SFU session and links (%{peer, id} each)
+  defp check_rehost(data) do
+    peers = data["peers"]
+
+    valid_peers =
+      is_list(peers) and length(peers) <= 15 and
+        Enum.all?(peers, fn peer ->
+          is_map(peer) and is_integer(peer["peer"]) and peer["peer"] in 1..15 and
+            identifier?(peer["id"])
+        end) and
+        length(Enum.uniq_by(peers, & &1["peer"])) == length(peers)
+
+    cond do
+      not Room.host_key?(data["hostKey"]) ->
+        {:error, "protocol", "Expected a hostKey"}
+
+      not (is_binary(data["session"]) and data["session"] =~ ~r/^[A-Za-z0-9_-]{1,128}$/) ->
+        {:error, "protocol", "Expected a session"}
+
+      not valid_peers ->
+        {:error, "protocol", "Expected peers: a list of {peer, id}"}
+
+      true ->
+        {:ok, data["session"], Enum.map(peers, &%{peer: &1["peer"], id: &1["id"]})}
+    end
+  end
+
   defp identifier?(value), do: is_binary(value) and value =~ ~r/^[0-9a-f]{12}$/
   defp net_version?(value), do: is_integer(value) and value in 0..0xFFFF
 
@@ -148,8 +211,14 @@ defmodule Signalling.Page do
            SFU.request(:post, "/sessions/new"),
          {:ok, %{"sessionDescription" => %{"type" => "offer", "sdp" => sdp}}} <-
            SFU.request(:post, "/sessions/#{session}/datachannels/establish", events) do
+      # (the host's page keeps its session, for a rehost)
+      offer =
+        if page.role == :host,
+          do: %{type: "offer", sdp: sdp, session: session},
+          else: %{type: "offer", sdp: sdp}
+
       if page.role == :host, do: Room.host_session(page.room, session)
-      {:ok, [%{type: "offer", sdp: sdp}], %{page | stage: :offered, session: session}}
+      {:ok, [offer], %{page | stage: :offered, session: session}}
     else
       {:error, _, _} = error -> error
       _ -> {:error, "sfu", "The SFU did not offer a connection"}

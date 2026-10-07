@@ -1,6 +1,11 @@
 # One hosted game: its host's page and its joiners', whose ends it sees
-# (it monitors them). It ends when its host's page does: links already made
-# keep working (they are the SFU's), but no one else can join.
+# (it monitors them). It ends when its host's page leaves (the page closes
+# its WebSocket): links already made keep working (they are the SFU's), but
+# no one else can join. A host's page whose WebSocket is lost (a network
+# blip, a server restart) comes back to it (rehost), with its host key: the
+# room waits for it a while (:host_grace), and a room the server no longer
+# has (it restarted) is made again, with the same code and secret
+# (NETWORK.md, "Rooms and invites").
 defmodule Signalling.Room do
   @moduledoc false
   use GenServer, restart: :temporary
@@ -22,16 +27,63 @@ defmodule Signalling.Room do
 
   # ---------- what a page asks of it
 
-  # the calling page hosts a new room: {:ok, room, its secret}
+  # the calling page hosts a new room: {:ok, room, its secret, its host key}
   def open(code, id, net_version) do
-    secret = Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
+    host_key = Base.url_encode64(:crypto.strong_rand_bytes(16), padding: false)
+    secret = secret(code, host_key)
     room = %{code: code, secret: secret, id: id, net_version: net_version, host: self()}
 
     case DynamicSupervisor.start_child(Signalling.RoomSupervisor, {__MODULE__, room}) do
-      {:ok, pid} -> {:ok, pid, secret}
+      {:ok, pid} -> {:ok, pid, secret, host_key}
       {:error, _} -> {:error, "protocol", "The room already has a host"}
     end
   end
+
+  # the invite's secret, from the host key that only the host has: so that
+  # a room the server no longer has can be made again by its host, and by
+  # no joiner (each has the secret, which does not give the key)
+  defp secret(code, host_key) do
+    :crypto.hash(:sha256, "halo-room-v1:#{code}:#{host_key}")
+    |> binary_part(0, 16)
+    |> Base.url_encode64(padding: false)
+  end
+
+  def host_key?(text), do: is_binary(text) and text =~ ~r/^[A-Za-z0-9_-]{22}$/
+
+  # the calling page is the host of room `code` again, whose links are
+  # `peers` (%{peer, id}) and SFU session `session`: the room it had, or
+  # the same made again. {:ok, room, its secret}
+  def rehost(code, host_key, id, net_version, session, peers) do
+    secret = secret(code, host_key)
+    request = {:rehost, self(), secret, id, net_version, session, peers}
+
+    room =
+      case Registry.lookup(Signalling.Rooms, code) do
+        [{room, _}] ->
+          room
+
+        [] ->
+          again = %{code: code, secret: secret, id: id, net_version: net_version, host: nil}
+
+          case DynamicSupervisor.start_child(Signalling.RoomSupervisor, {__MODULE__, again}) do
+            {:ok, room} -> room
+            {:error, {:already_started, room}} -> room
+            {:error, _} -> nil
+          end
+      end
+
+    with room when is_pid(room) <- room,
+         {:ok, :ok} <- call(room, request) do
+      {:ok, room, secret}
+    else
+      {:ok, {:error, _, _} = error} -> error
+      _ -> {:error, "not-found", "No such game"}
+    end
+  end
+
+  # the calling host's page leaves the room (it closed its WebSocket): the
+  # room ends at once, without waiting for it
+  def host_left(room), do: GenServer.cast(room, {:host_left, self()})
 
   # the calling page joins the room: {:ok, %{room, peer, host}}, the host's
   # id, net_version and SFU session
@@ -77,13 +129,35 @@ defmodule Signalling.Room do
 
   @impl true
   def init(room) do
-    Process.monitor(room.host)
-    # joiners: page => %{peer, id, net_version, monitor, channels}
-    {:ok, Map.merge(room, %{session: nil, ready: false, joiners: %{}})}
+    # (a room made again for a rehost waits for it as for a host that is away)
+    grace =
+      if room.host do
+        Process.monitor(room.host)
+        nil
+      else
+        wait()
+      end
+
+    # joiners: page => %{peer, id, net_version, monitor, channels, session};
+    # one the server knows only from its host's rehost (it restarted) is
+    # {:ghost, peer} => the same, with no monitor and no channels
+    {:ok, Map.merge(room, %{session: nil, ready: false, joiners: %{}, grace: grace})}
   end
 
   @impl true
   def handle_call({:join, page, id, net_version, secret}, _from, room) do
+    # (a machine that comes back, whose old link the server knows only from
+    # its host: the old one is gone)
+    room =
+      if is_binary(secret) and Plug.Crypto.secure_compare(secret, room.secret) do
+        case Enum.find(room.joiners, fn {key, joiner} -> ghost?(key) and joiner.id == id end) do
+          {key, _} -> remove(room, key, "left")
+          nil -> room
+        end
+      else
+        room
+      end
+
     taken = MapSet.new(Map.values(room.joiners), & &1.peer)
     peer = Enum.find(1..(@maximum_joiners + 1), &(&1 not in taken))
 
@@ -98,6 +172,9 @@ defmodule Signalling.Room do
 
         not room.ready ->
           {"not-ready", "The host is still connecting"}
+
+        room.host == nil ->
+          {"not-ready", "The host is reconnecting"}
 
         id == room.id or Enum.any?(Map.values(room.joiners), &(&1.id == id)) ->
           {"duplicate", "A machine with this identifier is already in the game"}
@@ -119,7 +196,8 @@ defmodule Signalling.Room do
           id: id,
           net_version: net_version,
           monitor: Process.monitor(page),
-          channels: nil
+          channels: nil,
+          session: nil
         }
 
         host = %{id: room.id, net_version: room.net_version, session: room.session}
@@ -134,10 +212,38 @@ defmodule Signalling.Room do
       nil ->
         {:reply, {:error, "dropped", "The host dropped this machine"}, room}
 
+      _ when room.host == nil ->
+        {:reply, {:error, "not-ready", "The host is reconnecting"}, room}
+
       joiner ->
         link = %{type: "link", peer: joiner.peer, id: joiner.id, netVersion: joiner.net_version}
         send(room.host, {:push, Map.merge(link, channels)})
-        {:reply, :ok, put_in(room.joiners[page].channels, Map.values(channels))}
+        joiner = %{joiner | channels: Map.values(channels), session: room.session}
+        {:reply, :ok, put_in(room.joiners[page], joiner)}
+    end
+  end
+
+  def handle_call({:rehost, page, secret, id, net_version, session, peers}, _from, room) do
+    cond do
+      not (Plug.Crypto.secure_compare(secret, room.secret) and id == room.id) ->
+        {:reply, {:error, "secret", "Not this game's host"}, room}
+
+      net_version != room.net_version ->
+        {:reply, {:error, "version", "The room is of network version #{room.net_version}"}, room}
+
+      true ->
+        # (a page the server still takes for the host, whose WebSocket is
+        # gone but not yet seen to be: the new one replaces it)
+        if room.host && room.host != page do
+          send(room.host, {:fail, "replaced", "This game's host connected again"})
+        end
+
+        if room.host != page, do: Process.monitor(page)
+
+        {:reply, :ok,
+         room
+         |> Map.merge(%{host: page, session: session, ready: true, grace: nil})
+         |> reconcile(peers)}
     end
   end
 
@@ -148,7 +254,7 @@ defmodule Signalling.Room do
   def handle_cast({:drop, from, peer}, room) do
     case Enum.find(room.joiners, fn {_, joiner} -> from == room.host and joiner.peer == peer end) do
       {page, _} ->
-        send(page, {:fail, "dropped", "The host dropped this machine"})
+        if is_pid(page), do: send(page, {:fail, "dropped", "The host dropped this machine"})
         {:noreply, remove(room, page, "dropped")}
 
       nil ->
@@ -158,30 +264,94 @@ defmodule Signalling.Room do
 
   def handle_cast({:gone, page, reason}, room), do: {:noreply, remove(room, page, reason)}
 
+  def handle_cast({:host_left, page}, %{host: page} = room), do: close(room)
+  def handle_cast({:host_left, _}, room), do: {:noreply, room}
+
   @impl true
-  def handle_info({:DOWN, _, :process, page, _}, %{host: page} = room) do
-    for {joiner, _} <- room.joiners do
+  # the host's page ended without leaving (its WebSocket was lost): the
+  # room waits for it to come back, if it had ever reached the SFU
+  def handle_info({:DOWN, _, :process, page, _}, %{host: page, ready: true} = room) do
+    {:noreply, %{room | host: nil, grace: wait()}}
+  end
+
+  def handle_info({:DOWN, _, :process, page, _}, %{host: page} = room), do: close(room)
+  def handle_info({:DOWN, _, :process, page, _}, room), do: {:noreply, remove(room, page, "left")}
+
+  def handle_info({:grace, grace}, %{grace: grace} = room), do: close(room)
+  def handle_info(_, room), do: {:noreply, room}
+
+  # the room ends: its joiners are told, and their links left as they are
+  defp close(room) do
+    for {joiner, _} <- room.joiners, is_pid(joiner) do
       send(joiner, {:fail, "closed", "The host left"})
     end
 
     {:stop, :normal, room}
   end
 
-  def handle_info({:DOWN, _, :process, page, _}, room), do: {:noreply, remove(room, page, "left")}
+  # how long a room waits for its host to come back
+  defp wait do
+    grace = make_ref()
+    Process.send_after(self(), {:grace, grace}, Application.fetch_env!(:signalling, :host_grace))
+    grace
+  end
+
+  defp ghost?(key), do: match?({:ghost, _}, key)
+
+  # the room's joiners as the host that came back has them: a linked joiner
+  # it no longer has (its link ended while the host was away) is gone, and
+  # one the room does not know of (the server restarted) is a ghost, which
+  # keeps its number and its id until its link ends
+  defp reconcile(room, peers) do
+    kept = MapSet.new(peers, & &1.peer)
+
+    room =
+      Enum.reduce(room.joiners, room, fn {key, joiner}, room ->
+        if joiner.channels && joiner.peer not in kept do
+          if is_pid(key), do: send(key, {:fail, "dropped", "The link to the host ended"})
+          remove(room, key, "failed")
+        else
+          room
+        end
+      end)
+
+    known = MapSet.new(Map.values(room.joiners), & &1.peer)
+
+    Enum.reduce(peers, room, fn %{peer: peer, id: id}, room ->
+      if peer in known do
+        room
+      else
+        ghost = %{
+          peer: peer,
+          id: id,
+          net_version: room.net_version,
+          monitor: nil,
+          channels: nil,
+          session: nil
+        }
+
+        put_in(room.joiners[{:ghost, peer}], ghost)
+      end
+    end)
+  end
 
   # a joiner ends: if its link was made, the host is told, and the host's
-  # channels of it are closed
+  # channels of it are closed (a ghost's: the host's page told of its end,
+  # or is told of it now)
   defp remove(room, page, reason) do
     case Map.pop(room.joiners, page) do
       {nil, _} ->
         room
 
       {joiner, joiners} ->
-        Process.demonitor(joiner.monitor, [:flush])
+        if joiner.monitor, do: Process.demonitor(joiner.monitor, [:flush])
+
+        if (joiner.channels || ghost?(page)) && room.host do
+          send(room.host, {:push, %{type: "unlink", peer: joiner.peer, reason: reason}})
+        end
 
         if joiner.channels do
-          send(room.host, {:push, %{type: "unlink", peer: joiner.peer, reason: reason}})
-          session = room.session
+          session = joiner.session || room.session
           channels = for id <- joiner.channels, do: %{id: id}
 
           Task.Supervisor.start_child(Signalling.Tasks, fn ->

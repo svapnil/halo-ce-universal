@@ -8,6 +8,8 @@ config :signalling,
   port: String.to_integer(System.get_env("SIGNALLING_PORT", "8791")),
   origins: list.(System.get_env("SIGNALLING_ORIGINS", "")),
   answer_timeout: String.to_integer(System.get_env("SIGNALLING_ANSWER_TIMEOUT", "30000")),
+  # how long a room waits for a host whose WebSocket was lost (milliseconds)
+  host_grace: String.to_integer(System.get_env("SIGNALLING_HOST_GRACE", "60000")),
   pages_at_once: String.to_integer(System.get_env("SIGNALLING_PAGES_AT_ONCE", "32")),
   online_at_once: String.to_integer(System.get_env("SIGNALLING_ONLINE_AT_ONCE", "400")),
   sfu: [

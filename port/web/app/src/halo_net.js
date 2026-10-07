@@ -18,11 +18,23 @@ onLink(link) gets { peer, id, netVersion, reliable, unreliable }, the two
 RTCDataChannels open (binary messages as ArrayBuffers); onUnlink(peer,
 reason) when it ends; onClose(error) when the signalling ends (a game goes
 on without it, but no one else can join, and links are no longer told of).
+
+A host whose WebSocket is lost (a network blip, the server restarting)
+connects again, and takes its room back with its host key (rehost): its
+links and its SFU session stay as they were, and the invite keeps working.
+onSignalling(up) tells it: false as it is lost, true as it is back. Only a
+refusal that trying again would not change (or the SFU's connection
+failing) ends it.
 */
 
 const PROTOCOL_VERSION = 1;
 const PING_INTERVAL = 30 * 1000;
 const CONNECT_TIMEOUT = 30 * 1000;
+/* a host's tries to connect again, then every 15 seconds */
+const RECONNECT_DELAYS = [1000, 2000, 4000, 8000, 15000];
+/* a rehost's refusals that trying again would not change (the Worker's
+rooms know no rehost: "protocol") */
+const FINAL_REFUSALS = new Set(["secret", "version", "protocol"]);
 const RTC_CONFIGURATION = {
 	iceServers: [{ urls: "stun:stun.cloudflare.com:3478" }],
 	bundlePolicy: "max-bundle",
@@ -86,14 +98,22 @@ function connect({
 	onLink = () => {},
 	onUnlink = () => {},
 	onClose = () => {},
+	onSignalling = () => {},
 }) {
 	const hosting = room === null;
 	const peerConnection = new RTCPeerConnection(RTC_CONFIGURATION);
-	const socket = new WebSocket(`${signalling.replace(/^http/, "ws")}/net/rooms/${hosting ? "new" : room}`);
 	const links = new Map();
+	let socket = null;
 	let settled = false;
 	let closed = false;
 	let ping = 0;
+	/* the host's, for a rehost: its key (the welcome's) and its SFU session
+	(the offer's) */
+	let hostKey = null;
+	let sfuSession = null;
+	let reconnects = 0;
+	let reconnectTimer = 0;
+	let reconnecting = false;
 	let resolveConnect;
 	let rejectConnect;
 	const connected = new Promise((resolve, reject) => {
@@ -139,8 +159,9 @@ function connect({
 		}
 		closed = true;
 		clearTimeout(timeout);
+		clearTimeout(reconnectTimer);
 		clearInterval(ping);
-		socket.close();
+		socket?.close();
 		if (!settled) {
 			settled = true;
 			peerConnection.close();
@@ -187,7 +208,14 @@ function connect({
 		const entry = { peer: message.peer, id: message.id, netVersion: message.netVersion, ...channels };
 		links.set(message.peer, entry);
 		for (const channel of Object.values(channels)) {
-			channel.addEventListener("close", () => unlink(message.peer, "failed"), { once: true });
+			channel.addEventListener("close", () => {
+				/* (the host tells the room, which may know the joiner only
+				from a rehost, so that its number and id are free again) */
+				if (hosting && links.get(message.peer) === entry) {
+					send({ type: "drop", peer: message.peer });
+				}
+				unlink(message.peer, "failed");
+			}, { once: true });
 		}
 		Promise.all(Object.values(channels).map(opened)).then(() => {
 			if (links.get(message.peer) === entry) {
@@ -199,12 +227,43 @@ function connect({
 		});
 	}
 
-	socket.addEventListener("open", () => {
-		send({ type: hosting ? "host" : "join", version: PROTOCOL_VERSION, id, netVersion, ...(hosting ? {} : { secret }) });
-		ping = setInterval(() => socket.readyState === WebSocket.OPEN && socket.send("ping"), PING_INTERVAL);
-	});
+	/* the signalling's WebSocket: the first, or a host's again (rehost) */
+	function open(rehost) {
+		const name = rehost ? session.room : hosting ? "new" : room;
+		const ws = new WebSocket(`${signalling.replace(/^http/, "ws")}/net/rooms/${name}`);
+		socket = ws;
+		ws.addEventListener("open", () => {
+			if (rehost) {
+				const peers = [...links.values()].map((link) => ({ peer: link.peer, id: link.id }));
+				send({ type: "rehost", version: PROTOCOL_VERSION, id, netVersion, hostKey, session: sfuSession, peers });
+			} else {
+				send({ type: hosting ? "host" : "join", version: PROTOCOL_VERSION, id, netVersion, ...(hosting ? {} : { secret }) });
+			}
+		});
+		ws.addEventListener("message", (event) => ws === socket && receive(event));
+		ws.addEventListener("close", () => ws === socket && lost());
+	}
 
-	socket.addEventListener("message", (event) => {
+	/* the WebSocket ended: a host that can comes back, else the signalling
+	ends (links stay) */
+	function lost() {
+		if (closed) {
+			return;
+		}
+		const connection = peerConnection.connectionState;
+		if (settled && hosting && hostKey && sfuSession && connection !== "failed" && connection !== "closed") {
+			if (!reconnecting) {
+				reconnecting = true;
+				onSignalling(false);
+			}
+			const delay = RECONNECT_DELAYS[Math.min(reconnects++, RECONNECT_DELAYS.length - 1)];
+			reconnectTimer = setTimeout(() => !closed && open(true), delay);
+			return;
+		}
+		end(settled ? null : new NetError("closed", "The signalling closed"));
+	}
+
+	function receive(event) {
 		if (event.data === "pong") {
 			return;
 		}
@@ -218,11 +277,18 @@ function connect({
 			case "welcome":
 				session.room = message.room;
 				session.peer = message.peer;
+				hostKey = message.hostKey || hostKey;
 				/* the invite leads to this page's site, wherever the
 				signalling is */
 				session.invite = message.secret ? `${location.origin}/#join=${message.room}.${message.secret}` : null;
+				if (reconnecting) {
+					reconnecting = false;
+					reconnects = 0;
+					onSignalling(true);
+				}
 				break;
 			case "offer":
+				sfuSession = message.session || null;
 				answer(message.sdp).catch((error) => fail(new NetError("rtc", error.message)));
 				break;
 			case "link":
@@ -232,12 +298,18 @@ function connect({
 				unlink(message.peer, message.reason);
 				break;
 			case "error":
+				/* (a host comes back after a refusal that may pass: the
+				WebSocket's close, which follows, tries again) */
+				if (settled && hosting && hostKey && !FINAL_REFUSALS.has(message.code)) {
+					break;
+				}
 				fail(new NetError(message.code, message.message));
 				break;
 		}
-	});
+	}
 
-	socket.addEventListener("close", () => end(settled ? null : new NetError("closed", "The signalling closed")));
+	open(false);
+	ping = setInterval(() => socket?.readyState === WebSocket.OPEN && socket.send("ping"), PING_INTERVAL);
 
 	/* the host is ready for joiners once it reaches the SFU */
 	peerConnection.addEventListener("connectionstatechange", () => {

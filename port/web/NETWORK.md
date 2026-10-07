@@ -53,7 +53,7 @@ is not in git. When a decision changes, update this list.
 | 8 | A page opened with an invite (`#join=` or `#native=`) skips the menus. It joins the game in progress from the main menu, then opens the menus' lobby. | The player joins through the menus, or from the clipboard at start-up. | One click from an invite to playing. | `src/web_lobby.c`, `app/src/lobby.js` |
 | 9 | Create Game > Internet makes the room only when the game starts (Server Setup's START GAME), not when Server Setup opens, so Server Setup's INVITE LINK reads MADE WHEN THE GAME STARTS. The invite is then on the page (its toast and its bar) and in the lobby between games. Create Game > LAN makes no room. | The server, and its invite, are made as Create Game opens, and Server Setup shows the invite. | A room is a game being played, not one being set up. A browser has no LAN, so a LAN game gets no room and no invite. | `menu_functions.c` (`multiplayer_host`, `server_start`: `p2p_set_hosting_allowed`), "The lobby" |
 | 10 | The clipboard is read only when the player presses PASTE LINK. `network.join_from_clipboard` is off. | The game reads the clipboard each time its window comes to the front, and joins an invite it finds there. | The browser asks the player's permission to read the clipboard; reading it unprompted would show that prompt for no reason. | `src/web_clipboard.c`, `app/src/game.js` |
-| 11 | A room ends when its host's WebSocket closes. Games already linked go on, but no one else can join until the host hosts again. A deploy of the Fly machine drops native games. | The host's own process keeps hosting. | Rooms live in the signalling server's memory. | "Rooms and invites", "The machine" |
+| 11 | A room ends when its host's page leaves it. A host whose WebSocket is lost (a blip, a deploy of the Fly machine) keeps playing, and its page takes the room back (`rehost`), with the same invite; joiners are not told. A deploy still drops native games. | The host's own process keeps hosting. | Rooms live in the signalling server's memory: the host's page holds what it takes to make its room again (decided 2026-10-06). | "Rooms and invites", "The machine" |
 | 12 | Limits: 15 joiners (16 machines) a room, 5 rooms and 20 joins a minute from an address, and the relay's caps for native games. | The game's own limits. | Each join costs SFU sessions, and the relay is shared. | "Rooms and invites", "The relay's limits" |
 | 13 | A joiner must have the host's `HALO_PORT_NETWORK_VERSION`. The rooms refuse other versions, and native games need a matching desktop release. | The same check, in `p2p.c`. | Matches upstream. A new version reaches browsers on deploy. | "The game's side" |
 | 14 | No Discord identity and no hardware id: `p2p_discord_identity` and `p2p_hardware_id` give empty values for browsers. | Discord name and id, hardware id. | A page has neither. | `web_p2p.c` |
@@ -103,13 +103,37 @@ or the site itself; "The signalling's server"):
 
 - `room`: 8 characters of Crockford's base 32, made by the server. It names
   the game and is not secret, so that a server browser can list it later.
-- `secret`: 16 random bytes, base64url. Only the invite carries it. A join
-  without it is refused.
+- `secret`: 16 bytes, base64url: the first 16 of the SHA-256 of
+  `halo-room-v1:<room>:<host key>`, where the host key is 16 random bytes
+  (base64url) that only the host's page is given. Only the invite carries
+  the secret; a join without it is refused. A joiner has the secret, which
+  does not give the key.
 - The invite is `https://<site>/#join=<room>.<secret>`. The secret is in the
   fragment, which the browser does not send to the server and does not log.
 
-A room ends when its host's WebSocket closes. Links already made keep
-working (they are the SFU's), but no one else can join.
+A room ends when its host's page leaves it, closing its WebSocket. Links
+already made keep working (they are the SFU's), but no one else can join.
+
+A host's WebSocket that is lost instead (no close frame: a network blip, the
+server restarting, as a deploy does) does not end the room. The host's page
+connects again, with backoff (1, 2, 4, 8, then every 15 seconds), and takes
+the room back with `rehost`: its host key, its SFU session, and its links.
+Its links and its SFU connection are as they were, so the invite keeps
+working and the game is not touched.
+
+- The server still has the room: it waits for the host 60 seconds
+  (`SIGNALLING_HOST_GRACE`), during which joins are refused `not-ready`
+  (try again) and its joiners are told nothing. Then it ends.
+- The server no longer has it (it restarted): the room is made again, with
+  the same code and secret, from the host key. The host's links (`peers`)
+  keep their numbers and ids: the room knows them only from the host, until
+  their links end (the host's `drop`), or until that machine joins again
+  and takes its old link's place.
+- A page the server still takes for the host (its WebSocket gone, but not
+  yet seen to be) is replaced: it is sent `error` `replaced`.
+
+The Worker's rooms know no `rehost` (`protocol`): their hosts' pages do not
+come back.
 
 Limits: 15 joiners (16 machines); an address makes at most 5 rooms and 20
 joins a minute (each is SFU sessions on the account's bill). A joiner that has not answered the SFU's
@@ -134,6 +158,7 @@ without a word to the room.
 | --- | --- | --- |
 | `host` | `version`, `id`, `netVersion` | First message, on `/net/rooms/new`. |
 | `join` | `version`, `id`, `netVersion`, `secret` | First message, on `/net/rooms/<room>`. |
+| `rehost` | `version`, `id`, `netVersion`, `hostKey`, `session`, `peers` | First message, on `/net/rooms/<room>`: the host's page again, its WebSocket having been lost ("Rooms and invites"). `session` is its SFU session (the `offer`'s), `peers` its links, `[{peer, id}]`. Answered with `welcome` only: no `offer`, the page being connected already. |
 | `answer` | `sdp` | The page's answer to `offer`. |
 | `drop` | `peer` | Host only: end that joiner's link (a kick or ban in the game). |
 
@@ -141,8 +166,8 @@ without a word to the room.
 
 | `type` | Fields | Meaning |
 | --- | --- | --- |
-| `welcome` | `room`, `peer`; to the host also `secret` | Accepted. `peer` is this page's number in the room: the host is 0, joiners 1 to 15. The host's page makes the invite from its own address, `room` and `secret`. |
-| `offer` | `sdp` | The SFU's offer for this page's connection. Answer with `answer`. |
+| `welcome` | `room`, `peer`; to the host also `secret`, and to a `host` also `hostKey` | Accepted. `peer` is this page's number in the room: the host is 0, joiners 1 to 15. The host's page makes the invite from its own address, `room` and `secret`, and keeps `hostKey` for a `rehost`. |
+| `offer` | `sdp`; to the host also `session` | The SFU's offer for this page's connection. Answer with `answer`. The host keeps `session` for a `rehost`. |
 | `link` | `peer`, `id`, `netVersion`, `reliable`, `unreliable` | A link to `peer` is made. Create the two data channels with these SCTP ids (refer to "Data channels"). The host gets one for each joiner; a joiner gets one, to the host. |
 | `unlink` | `peer`, `reason` | The link to `peer` ended: `left`, `dropped` or `failed`. Close its channels. |
 | `error` | `code`, `message` | Refused or failed; the server then closes the WebSocket. |
@@ -152,8 +177,10 @@ last minute: 5 and 20; or has too many pages at once), `protocol` (a message out
 (another `version` than the server's, or another `netVersion` than the
 host's), `not-found` (no such room), `secret`, `full`, `duplicate` (the `id`
 is already in the room), `not-ready` (the host has not connected to the SFU
-yet: try again), `timeout`, `sfu` (the SFU refused or did not answer),
-`closed` (the host left).
+yet, or is reconnecting: try again), `timeout`, `sfu` (the SFU refused or
+did not answer), `closed` (the host left), `replaced` (the host's page
+connected again: to the page it replaced). To a `rehost`, `secret` is a host
+key, `id` or room that does not match.
 
 ### Sequences
 
@@ -571,8 +598,8 @@ gives a page another.
 
 What it is for: what a server that is always there can do and a Durable
 Object cannot, a lobby that rooms update and pages watch (browsers' rooms in
-the server browser), and hosts that come back to their rooms. Neither is
-made yet.
+the server browser), and hosts that come back to their rooms (made:
+"Rooms and invites").
 
 - **A process for each.** A room is a process (`Signalling.Room`), found by
   its code; a page's WebSocket is another (`Signalling.Page`), which makes
@@ -580,7 +607,8 @@ made yet.
   watches its pages: a joiner's end is the host's `unlink`, the host's end
   is the room's.
 - **In memory.** Rooms are kept nowhere else: when the server starts again
-  they are gone, and their hosts host again ("The machine").
+  they are gone, and their hosts' pages make them again, as they were
+  (`rehost`; "Rooms and invites").
 - **Limits.** As the Worker's (5 rooms and 20 joins a minute for an
   address, by `Fly-Client-IP`), and two for the machine, whose memory is
   the relay's too: an address has at most 32 pages at once
@@ -588,13 +616,16 @@ made yet.
   answered the SFU's offer, or said who it is, in 30 seconds is closed, and
   one that has sent nothing for 90.
 - **When the host leaves**, its joiners' channels are left open, as "Rooms
-  and invites" says: a host whose WebSocket dropped plays on. The Worker's
-  rooms close them (as for a joiner that leaves), which ends those links.
+  and invites" says. The Worker's rooms close them (as for a joiner that
+  leaves), which ends those links. A host's page whose WebSocket was lost
+  is waited for, and comes back (`rehost`).
 - **Settings** (the environment): `SIGNALLING_PORT` (8791) and
   `SIGNALLING_HOST` (127.0.0.1: the relay passes `/net/rooms/` on),
   `SIGNALLING_ORIGINS` (the pages' origins allowed; any, if empty),
-  `REALTIME_APP_ID` and `REALTIME_APP_TOKEN`, and for tests `SFU_API` and
-  `SIGNALLING_ANSWER_TIMEOUT` (milliseconds).
+  `REALTIME_APP_ID` and `REALTIME_APP_TOKEN`, `SIGNALLING_HOST_GRACE` (how
+  long a room waits for a host whose WebSocket was lost: 60000
+  milliseconds), and for tests `SFU_API` and `SIGNALLING_ANSWER_TIMEOUT`
+  (milliseconds).
 
 Locally: `mix run --no-halt` in `signalling/` (with the SFU app's two
 values in the environment), and `SIGNALLING_URL=http://localhost:8791` in
@@ -690,8 +721,9 @@ signalling (`RELAY_SIGNALLING`), so the two share an address,
 - **A deploy ends the games in progress**, whichever server it is for: the
   machine starts again, and the relay with it, whose sockets native games'
   pages play through; they are dropped from their games. Games between
-  browsers go on (their traffic is the SFU's), but their rooms end: no one
-  else joins until their hosts host again. So deploy when few play
+  browsers go on (their traffic is the SFU's), and their hosts' pages make
+  their rooms again as the server is back (`rehost`: the same invites).
+  So deploy when few play
   (`fly logs` has each relay session; `/healthz` counts them).
 - **The CPU is the relay's first.** The relay carries games' packets, and
   the machine's four shared CPUs have one allowance between them (a quarter
