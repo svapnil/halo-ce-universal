@@ -404,14 +404,19 @@ test("messages out of order or malformed", async () => {
 	await hostPage.error("protocol");
 });
 
-test("a full room: 15 joiners", async () => {
+/* (the Worker's rooms, which no page uses any more, still take 15) */
+test("a full room: 31 joiners", { skip: SERVER === "worker" }, async () => {
 	newAddress();
 	const hostPage = await host();
-	for (let number = 1; number <= 15; number++) {
+	/* (each joiner from an address of its own: an address joins 20 times a
+	minute at most) */
+	for (let number = 1; number <= 31; number++) {
+		newAddress();
 		assert.equal((await joiner(hostPage, number)).welcome.peer, number);
 	}
+	newAddress();
 	const page_ = await page(hostPage.welcome.room);
-	page_.send(hello("join", joinerId(16), { secret: hostPage.welcome.secret }));
+	page_.send(hello("join", joinerId(32), { secret: hostPage.welcome.secret }));
 	await page_.error("full");
 });
 

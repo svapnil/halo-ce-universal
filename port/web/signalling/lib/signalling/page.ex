@@ -234,9 +234,10 @@ defmodule Signalling.Page do
     peers = data["peers"]
 
     valid_peers =
-      is_list(peers) and length(peers) <= 15 and
+      is_list(peers) and length(peers) <= Room.maximum_joiners() and
         Enum.all?(peers, fn peer ->
-          is_map(peer) and is_integer(peer["peer"]) and peer["peer"] in 1..15 and
+          is_map(peer) and is_integer(peer["peer"]) and
+            peer["peer"] in 1..Room.maximum_joiners() and
             identifier?(peer["id"])
         end) and
         length(Enum.uniq_by(peers, & &1["peer"])) == length(peers)

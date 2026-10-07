@@ -12,8 +12,10 @@ defmodule Signalling.Room do
 
   alias Signalling.SFU
 
-  # 16 machines: the browser host has a page's bandwidth, not a server's
-  @maximum_joiners 15
+  # 32 machines, as the game's 32 players at most (NETWORK.md, "How it
+  # differs from upstream's", row 18): a player to a page, the host's
+  # included. The host's page carries a link to each, through the SFU
+  @maximum_joiners 31
   @code_alphabet ~c"0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
   # a new room's code: 8 characters of Crockford's base 32
@@ -24,6 +26,8 @@ defmodule Signalling.Room do
   end
 
   def code?(text), do: text =~ ~r/^[0-9A-HJKMNP-TV-Z]{8}$/
+
+  def maximum_joiners, do: @maximum_joiners
 
   # ---------- what a page asks of it
 
