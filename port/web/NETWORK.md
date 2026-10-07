@@ -588,7 +588,20 @@ chat that waits.
 A pane to the game's right (`app/src/Chat.jsx`), as tall as it: every page
 with the site open, over the online count's WebSocket (`Signalling.Chat`).
 Not where the window is narrower than 900 pixels, nor on phones and
-tablets (the game takes the whole window).
+tablets (the game takes the whole window): there it is a drawer over the
+picture, from the bar's button, the picture's whole width on a phone
+upright.
+
+- **Putting it away.** The button at the header's left minimizes the pane
+  to a strip (`ChatRail`), whose room the game takes, and the strip brings
+  it back; the browser remembers which (`halo-chat-railed` in
+  localStorage). Over the picture, the same button closes the drawer. The
+  messages that come while it is away are counted: on the strip, and as a
+  dot on the bar's button (the history there as the page opens counts as
+  read).
+- **Times** are a line across the list over a message that comes 5 minutes
+  or more after the one before (and over the first), not beside each
+  message; a message's own time is its tooltip.
 
 - **Messages.** Page to server: `{"type": "name", "name"}` (as it connects,
   and when the name changes) and `{"type": "chat", "text"}`. Server to

@@ -120,7 +120,8 @@ controller's. The finger on the canvas is SDL's finger events, which
 `input.mouse_sensitivity` applies). The game is played sideways: upright,
 the page says to turn the phone. Sideways, the page's bar is hidden behind
 the button in the top left corner (a status to read shows it for a while),
-and the chat is a drawer over the picture, from the bar's button. iPhones
+and the chat is a drawer over the picture, from the bar's button (the bar
+goes while it is open: the button at the chat's top left closes it). iPhones
 have no fullscreen for pages and no pointer lock: the fullscreen button
 explains "Add to Home Screen" (the site's manifest and `index.html`'s Apple
 tags make the page a standalone app there), and from the Home Screen the
