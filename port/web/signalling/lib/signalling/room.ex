@@ -94,6 +94,20 @@ defmodule Signalling.Room do
   # players, maximum_players)
   def game(room, game), do: GenServer.cast(room, {:game, self(), game})
 
+  # the room `code` as it is now, if `secret` is its invite's: {:ok, room,
+  # state} (as /stats has it), or :error. The room then tells the lobby's
+  # chat of each change (Signalling.Chat.room_changed), for the chat's game
+  # cards (NETWORK.md, "Game cards")
+  def card(code, secret) do
+    with true <- is_binary(secret),
+         [{room, _}] <- Registry.lookup(Signalling.Rooms, code),
+         {:ok, {:ok, state}} <- call(room, {:card, secret}) do
+      {:ok, room, state}
+    else
+      _ -> :error
+    end
+  end
+
   # every room as it is now (NETWORK.md, "The room's game"): the server's
   # /stats. (A room that does not answer at once is left out)
   def all do
@@ -178,7 +192,9 @@ defmodule Signalling.Room do
        game: nil,
        game_updated_at: nil,
        match_started_at: nil,
-       matches: 0
+       matches: 0,
+       # whether the chat has a card of it (card/2)
+       carded: false
      })}
   end
 
@@ -257,29 +273,18 @@ defmodule Signalling.Room do
         link = %{type: "link", peer: joiner.peer, id: joiner.id, netVersion: joiner.net_version}
         send(room.host, {:push, Map.merge(link, channels)})
         joiner = %{joiner | channels: Map.values(channels), session: room.session}
-        {:reply, :ok, put_in(room.joiners[page], joiner)}
+        {:reply, :ok, changed(put_in(room.joiners[page], joiner))}
     end
   end
 
-  def handle_call(:state, _from, room) do
-    joiners = Map.values(room.joiners)
+  def handle_call(:state, _from, room), do: {:reply, state(room), room}
 
-    state = %{
-      room: room.code,
-      created_at: room.created_at,
-      host: if(room.host, do: "connected", else: "reconnecting"),
-      net_version: room.net_version,
-      # the machines in the room: the host and its linked joiners (a ghost:
-      # one the room knows from its host's rehost)
-      machines: 1 + Enum.count(joiners, &(&1.channels || &1.monitor == nil)),
-      joining: Enum.count(joiners, &(&1.channels == nil and &1.monitor != nil)),
-      game: room.game,
-      game_updated_at: room.game_updated_at,
-      match_started_at: room.match_started_at,
-      matches: room.matches
-    }
-
-    {:reply, state, room}
+  def handle_call({:card, secret}, _from, room) do
+    if Plug.Crypto.secure_compare(secret, room.secret) do
+      {:reply, {:ok, state(room)}, %{room | carded: true}}
+    else
+      {:reply, :error, room}
+    end
   end
 
   def handle_call({:rehost, page, secret, id, net_version, session, peers}, _from, room) do
@@ -302,7 +307,8 @@ defmodule Signalling.Room do
         {:reply, :ok,
          room
          |> Map.merge(%{host: page, session: session, ready: true, grace: nil})
-         |> reconcile(peers)}
+         |> reconcile(peers)
+         |> changed()}
     end
   end
 
@@ -334,7 +340,13 @@ defmodule Signalling.Room do
       end
 
     {:noreply,
-     %{room | game: game, game_updated_at: now(), match_started_at: started, matches: matches}}
+     changed(%{
+       room
+       | game: game,
+         game_updated_at: now(),
+         match_started_at: started,
+         matches: matches
+     })}
   end
 
   def handle_cast({:game, _, _}, room), do: {:noreply, room}
@@ -346,7 +358,7 @@ defmodule Signalling.Room do
   # the host's page ended without leaving (its WebSocket was lost): the
   # room waits for it to come back, if it had ever reached the SFU
   def handle_info({:DOWN, _, :process, page, _}, %{host: page, ready: true} = room) do
-    {:noreply, %{room | host: nil, grace: wait()}}
+    {:noreply, changed(%{room | host: nil, grace: wait()})}
   end
 
   def handle_info({:DOWN, _, :process, page, _}, %{host: page} = room), do: close(room)
@@ -363,6 +375,35 @@ defmodule Signalling.Room do
 
     {:stop, :normal, room}
   end
+
+  # the room as /stats and the chat's cards have it
+  defp state(room) do
+    joiners = Map.values(room.joiners)
+
+    %{
+      room: room.code,
+      created_at: room.created_at,
+      host: if(room.host, do: "connected", else: "reconnecting"),
+      net_version: room.net_version,
+      # the machines in the room: the host and its linked joiners (a ghost:
+      # one the room knows from its host's rehost)
+      machines: 1 + Enum.count(joiners, &(&1.channels || &1.monitor == nil)),
+      joining: Enum.count(joiners, &(&1.channels == nil and &1.monitor != nil)),
+      game: room.game,
+      game_updated_at: room.game_updated_at,
+      match_started_at: room.match_started_at,
+      matches: room.matches
+    }
+  end
+
+  # tells the chat of the room as it is now, if the chat has a card of it
+  # (the chat lets most go: at most one a second for a room reaches pages)
+  defp changed(%{carded: true} = room) do
+    Signalling.Chat.room_changed(room.code, state(room))
+    room
+  end
+
+  defp changed(room), do: room
 
   defp now, do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
 
@@ -436,7 +477,7 @@ defmodule Signalling.Room do
           end)
         end
 
-        %{room | joiners: joiners}
+        changed(%{room | joiners: joiners})
     end
   end
 end

@@ -97,6 +97,16 @@ async function instantiateProgram(address, imports, received) {
 	return WebAssembly.instantiateStreaming(response, imports);
 }
 
+/* joins a browser's game by its invite from the page itself (the lobby
+chat's game cards): at once, in this page, if the game is at its main menu
+(as an invite the page was opened with: the link to the host, then the game
+joins it); false otherwise (in a game, or the menus: the page is to be
+opened with the invite instead) */
+let joinFromPage = () => false;
+export function joinInvite(invite) {
+	return joinFromPage(invite);
+}
+
 /* onStatus receives Emscripten's status lines (loading, errors); onNet,
 network play's ({ state, invite, players, error, relay }: sfu_transport.js,
 and relay_bridge.js's state as relay); onLobby, the game's phase while it
@@ -200,7 +210,9 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 			it find none). But for the network tests', which join by
 			themselves (HALO_NETWORK_TEST) */
 			let nativeJoins = nativeInvite() && !window.ENV.HALO_NETWORK_TEST ? 3 : 0;
+			let phase = "other";
 			const lobby = startLobby(module, (status) => {
+				phase = status.phase;
 				if (status.phase === "main-menu" && !savesChecked) {
 					savesChecked = true;
 					if (module._web_saves_persist() === 2) {
@@ -225,6 +237,13 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 			const transport = new URLSearchParams(location.search).get("net") === "tabs" ?
 				tabTransport() : sfuTransport({ invite, onStatus: onTransport });
 			startNetBridge(module, transport);
+			joinFromPage = (invite) => {
+				if (phase !== "main-menu" || !transport.join) {
+					return false;
+				}
+				transport.join(invite);
+				return true;
+			};
 		},
 		// (kept for a crash's report, and ?debug's Save log: crash.js)
 		print: (text) => {

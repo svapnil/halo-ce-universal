@@ -61,6 +61,7 @@ is not in git. When a decision changes, update this list.
 | 16 | A page in a background tab keeps playing on a 33 ms timer. | The game runs at full speed. | Browsers throttle hidden pages, and a host that stopped would freeze its game for everyone. | `sdl_platform.c` (`web_wait_for_frame`) |
 | 17 | No cross-platform play for games hosted in a browser: they are for browsers only, and what the game says of itself (`p2p_set_game_listing`, `p2p_set_game_player_counts`: its map, game type, players, whether a match is on) goes to our signalling server's room only, for its live state (`/stats`), never to the MQTT brokers or the desktop Server Browser. | The same two functions list a public game in every desktop build's Server Browser, and feed Discord. | The owner's invariant (2026-10-06): browser-hosted games stay browser-only, and the server keeps a live model of them. | `web_p2p.c` ("the hosted game"), "The room's game" |
 | 18 | A game hosted in a browser takes at most 16 players on a multiplayer map, and 4 in co-op (Server Setup's MAXIMUM PLAYERS stops there, and says so; co-op starts at 4). The rooms take as many machines, a player to a page: 15 joiners and the host. | Up to 128 players; co-op starts at 16. | What a host sends grows with the square of the players: each joiner gets every player's state, and the host sends it to each joiner, from one player's home connection, all of it through the SFU on our bill ("Bandwidth and its cost"). At 16 players that is about 4 Mbit/s from the host and 2 GB an hour to pay for; at 32 it would be about 15 Mbit/s, which many hosts do not have, and 7 GB. Co-op sends far more for each player (its enemies): about 250 KiB a second, so 4 players. (Decided 2026-10-06, by the owner, after 32 and 8.) | `menu_functions.c` (`WEB_MAXIMUM_PLAYERS`, `server_settings_maximum_players_limit`, `web_maximum_players_help`), `Signalling.Room` (`@maximum_joiners`) |
+| 19 | Every game hosted in a browser is told the whole site's lobby chat as it starts: a card in the host's name ("started a game") with the game live (map, game type, players, the match's clock), a green Join that joins it, and "Game over" as its room ends. Its invite is then any visitor's. An invite pasted alone in the chat is such a card too ("shared a game"). | Public games are listed in the Server Browser (LISTING: PUBLIC); a private one is reached only by its invite. | The owner's (2026-10-06): games are found in the lobby, and joined in a click. A browser game has no PRIVATE meanwhile (Server Setup has no LISTING in the browser: row 5). | "Game cards" |
 
 If upstream changes any of these on its side, the browser build may need a
 matching change (in `web_p2p.c`, `web_p2p_select.c`, the relay or the page),
@@ -786,6 +787,56 @@ tablets (the game takes the whole window).
 
 Locally: the server (`mix run --no-halt`), `npm run dev`, and the page at
 `http://localhost:8787/?signalling=http://localhost:8791`.
+
+### Game cards
+
+A game hosted in a browser is a card in the lobby's chat, live, with a Join
+(row 19 of "How it differs from upstream's"):
+
+- **Made from an invite.** A chat message that is a game's invite and
+  nothing else (`https://<site>/#join=<room>.<secret>`, or its fragment) is
+  a card, if the room is there and the secret is its own (`Room.card`);
+  else it is text. The host's page says its own as its room is made (once
+  for each room: a host that reconnects keeps its card), with
+  `"started": true` ("started a game"); a player who pastes one shares it
+  ("shared a game"). It is a message as any other: the chat's rate, and a
+  blocked word in the name keeps it to its page.
+- **Live.** The room tells the chat of each change once it has a card
+  (`Room`'s `changed`: its game, its machines, its host lost or back), and
+  the chat tells the pages at most once a second for a room
+  (`{"type": "card", "room", "card"}`, after the message's
+  `{"type": "chat", ..., "card": {...}, "started"}`). A page that comes has
+  each card as it is now, in the history. The match's clock is the page's,
+  from `matchStartedAt`.
+- **Over.** The chat watches each carded room's process: as it ends (its
+  host left, or did not come back in 60 seconds), its card is
+  `"status": "ended"`, with no Join. A card the history no longer keeps (50
+  messages) is let go.
+- **What it shows** (`Chat.jsx`'s `GameCard`): the map's name, the game
+  type, the players (of the most), the game's name (without a blocked word:
+  the host types it), and the state: in a match (with its clock), in the
+  lobby, starting, the host reconnecting, or over. Join is green; the
+  page's own game says "Your game", a game it is in "You're in", a full one
+  "Full".
+- **Join.** At the game's main menu the page joins in place
+  (`game.js`'s `joinInvite`: the link to the host, then the game joins its
+  game, as a page opened with an invite does); anywhere else (in a game,
+  in the menus) the page is opened again with the invite (in a game, the
+  browser asks first). Either way the page's address is the invite's
+  (`#join=`), so a reload joins it again.
+
+Messages: a card message has `card` (`room`, `secret`, and `status`
+`live` or `ended`, `host`, `machines`, `name`, `map`, `gametype`,
+`engine`, `players`, `maximumPlayers`, `inProgress`, `open`, `teams`,
+`matchStartedAt`, `matches`, `createdAt`, `endedAt`) and `started`; a
+`card` update has the same but `secret`.
+
+Checked (2026-10-06), locally, two headless Chromes: a host's game
+(`HALO_NETWORK_TEST`) was a card in the other page's chat on its own, its
+clock running; Join, from the main menu, had that page in the game 3
+seconds later (the host's game saw its player 2), and its card said
+"You're in", 2 players; an invite pasted by hand was a card ("shared a
+game"); a game whose host had gone was "Game over".
 
 ### The machine
 

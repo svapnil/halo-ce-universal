@@ -710,3 +710,90 @@ test("a game told too often is let go, and one malformed or not the host's refus
 test("/stats is not reachable through the relay", { skip: SERVER !== "machine" }, async () => {
 	assert.equal((await fetch(`${ORIGIN}/stats`)).status, 404);
 });
+
+/* ---------- game cards in the lobby's chat (/net/online; not the Worker's) */
+
+let visitors = 0;
+/* a page's lobby WebSocket: its messages, by type */
+function lobbyPage() {
+	const visitor = `test-visitor-${String(++visitors).padStart(8, "0")}`;
+	return new Promise((resolve) => {
+		const socket = new WebSocket(`ws://127.0.0.1:${PORT}/net/online?visitor=${visitor}`, {
+			origin: ORIGIN, headers: { "Fly-Client-IP": address },
+		});
+		opened.push(socket);
+		const result = { socket, messages: [] };
+		socket.on("message", (data) => {
+			const text = data.toString();
+			if (text !== "pong") {
+				result.messages.push(JSON.parse(text));
+			}
+		});
+		socket.on("open", () => resolve(result));
+		result.send = (message) => socket.send(JSON.stringify(message));
+		/* the last message of that type that matches, once one has come */
+		result.last = async (type, check = () => true) => {
+			let found;
+			await until(() => (found = result.messages.findLast((message) => message.type === type && check(message))));
+			return found;
+		};
+	});
+}
+
+const lobbyOptions = { skip: SERVER === "worker" };
+
+test("a game's invite in the chat is its card, live, and over as the room ends", lobbyOptions, async () => {
+	newAddress();
+	const hostPage = await host();
+	const invite = `https://openhaloce.com/#join=${hostPage.welcome.room}.${hostPage.welcome.secret}`;
+	const sharer = await lobbyPage();
+	const other = await lobbyPage();
+	sharer.send({ type: "name", name: "Hosty" });
+	await sleep(100);
+	sharer.send({ type: "chat", text: invite, started: true });
+
+	const said = await other.last("chat", (message) => message.card);
+	assert.equal(said.name, "Hosty");
+	assert.equal(said.started, true);
+	assert.equal(said.card.room, hostPage.welcome.room);
+	assert.equal(said.card.secret, hostPage.welcome.secret);
+	assert.equal(said.card.status, "live");
+	assert.equal(said.card.host, "connected");
+	assert.equal(said.card.map, null);
+
+	/* the room's game, as it changes */
+	hostPage.send(gameOf({ inProgress: true, players: 1, map: "bloodgulch" }));
+	let card = (await other.last("card", (message) => message.card.map === "bloodgulch")).card;
+	assert.equal(card.inProgress, true);
+	assert.match(card.matchStartedAt, /^\d{4}-/);
+	assert.equal(card.secret, undefined);
+
+	/* a page that comes has the card as it is now */
+	const late = await lobbyPage();
+	const history = await late.last("history");
+	const kept = history.messages.find((message) => message.card?.room === hostPage.welcome.room);
+	assert.equal(kept.card.map, "bloodgulch");
+	assert.equal(kept.card.secret, hostPage.welcome.secret);
+
+	/* the game's name is shown only without a blocked word */
+	await sleep(250);
+	hostPage.send(gameOf({ inProgress: true, players: 2, map: "bloodgulch", name: "n1gger" }));
+	card = (await other.last("card", (message) => message.card.players === 2)).card;
+	assert.equal(card.name, null);
+
+	hostPage.socket.close();
+	card = (await other.last("card", (message) => message.card.status === "ended")).card;
+	assert.match(card.endedAt, /^\d{4}-/);
+	assert.equal(card.inProgress, false);
+});
+
+test("an invite to no room, or with another secret, is said as text", lobbyOptions, async () => {
+	newAddress();
+	const hostPage = await host();
+	const sharer = await lobbyPage();
+	sharer.send({ type: "chat", text: `https://openhaloce.com/#join=${hostPage.welcome.room}.${"A".repeat(22)}` });
+	sharer.send({ type: "chat", text: `#join=ZZZZZZZZ.${hostPage.welcome.secret}` });
+	sharer.send({ type: "chat", text: `look: https://openhaloce.com/#join=${hostPage.welcome.room}.${hostPage.welcome.secret}` });
+	await until(() => sharer.messages.filter((message) => message.type === "chat").length === 3);
+	assert.ok(sharer.messages.filter((message) => message.type === "chat").every((message) => !message.card));
+});

@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { CrashPanel, SaveLogButton } from "./CrashPanel.jsx";
-import { browserSupport, startGame } from "./game.js";
+import { browserSupport, joinInvite, startGame } from "./game.js";
 import { keepFromBrowser } from "./keys.js";
 import { ChatPane } from "./Chat.jsx";
 import { joinLobby } from "./online.js";
@@ -119,6 +119,41 @@ export default function App() {
 		return siteLobby.current?.say(text) ?? false;
 	}
 
+	/* the room this page hosts (its invite's), or is in (the invite it
+	joined: the page's #join=), whose card has no Join */
+	const roomOf = (text) => /#join=([0-9A-Z]{8})\./i.exec(text || "")?.[1]?.toUpperCase() ?? null;
+	const ownRoom = net?.state === "hosting" ? roomOf(net.invite) : null;
+	const joinedRoom = net?.state === "joined" ? roomOf(location.hash) : null;
+
+	/* a game this page hosts is told the lobby as it starts: a card of it,
+	once for each room (a host that reconnects keeps its room, and its card;
+	NETWORK.md, "Game cards") */
+	const sharedRooms = useRef(new Set());
+	useEffect(() => {
+		if (!ownRoom || sharedRooms.current.has(ownRoom) || chatState !== "connected") {
+			return;
+		}
+		if (siteLobby.current?.share(net.invite)) {
+			sharedRooms.current.add(ownRoom);
+		}
+	}, [ownRoom, chatState, net?.invite]);
+
+	/* a card's Join: the game joins it in this page from its main menu, else
+	the page is opened again with its invite (in a game, the browser asks
+	first: keys.js) */
+	function joinFromCard(card) {
+		const fragment = `#join=${card.room}.${card.secret}`;
+		history.replaceState(null, "", `${location.pathname}${location.search}${fragment}`);
+		if (joinInvite(`${location.origin}/${fragment}`)) {
+			if (!chatDocked) {
+				setChatOpen(false);
+			}
+			focusGame();
+		} else {
+			location.reload();
+		}
+	}
+
 	/* (a status to read shows the hidden bar for a while; a status cleared
 	meanwhile leaves the bar until then) */
 	const statusTimer = useRef(null);
@@ -214,7 +249,8 @@ export default function App() {
 		focusGame();
 	}
 
-	const chatProps = { count: online, messages, notice: chatNotice, state: chatState, onSay: say };
+	const chatProps = { count: online, messages, notice: chatNotice, state: chatState, ownRoom, joinedRoom, onSay: say,
+		onJoin: joinFromCard };
 
 	return (
 		<main className="page">

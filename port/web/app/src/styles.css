@@ -898,6 +898,124 @@ takes the box's height, and the list scrolls) */
 	opacity: 0.6;
 }
 
+/* a game card (Chat.jsx's GameCard): a browser's game, live */
+.chat-said {
+	color: var(--text);
+}
+
+.game-card {
+	display: flex;
+	box-sizing: border-box;
+	flex: 1 0 100%;
+	min-width: 0;
+	align-items: center;
+	gap: 10px;
+	margin-top: 4px;
+	padding: 10px;
+	border: 1px solid var(--edge);
+	border-left: 3px solid #3fb950;
+	border-radius: 4px;
+	background: var(--page);
+}
+
+.game-card-ended {
+	border-left-color: var(--edge);
+	opacity: 0.7;
+}
+
+.game-card-body {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.game-card-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: 0.02em;
+	text-transform: uppercase;
+}
+
+.game-card-status-live {
+	color: #3fb950;
+}
+
+.game-card-status-lobby {
+	color: #6493ed;
+}
+
+.game-card-status-waiting {
+	color: #f0b45a;
+}
+
+.game-card-status-ended {
+	color: var(--text);
+}
+
+.game-card-dot {
+	width: 6px;
+	height: 6px;
+	border-radius: 50%;
+	background: currentColor;
+	box-shadow: 0 0 6px rgb(63 185 80 / 0.6);
+}
+
+.game-card-map {
+	color: var(--text-strong);
+	font-size: 14px;
+}
+
+.game-card-detail,
+.game-card-name {
+	font-size: 12px;
+}
+
+.game-card-name {
+	overflow: hidden;
+	opacity: 0.8;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.join-button {
+	flex: none;
+	height: 32px;
+	padding: 0 16px;
+	border: 0;
+	border-radius: 4px;
+	background: #238636;
+	color: #fff;
+	font: inherit;
+	font-weight: 600;
+	cursor: pointer;
+}
+
+.join-button:hover:not(:disabled) {
+	background: #2ea043;
+}
+
+.join-button:focus-visible {
+	outline: 2px solid #6493ed;
+	outline-offset: 2px;
+}
+
+.join-button:disabled {
+	background: var(--edge);
+	color: var(--text);
+	cursor: default;
+}
+
+.game-card-own {
+	flex: none;
+	font-size: 12px;
+	font-weight: 600;
+}
+
 .chat-notice {
 	margin: 0;
 	padding: 6px 12px;

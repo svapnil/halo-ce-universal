@@ -7,16 +7,22 @@
 #                                                     as the count changes
 #                    {"type": "history", "messages": [...]}   when it connects
 #                    {"type": "chat", "id", "name", "color", "text", "at"}
+#                    (and "card", "started": a game card, Signalling.Chat)
+#                    {"type": "card", "room", "card"}  a game card's room
+#                                                     as it is now
 #                    {"type": "error", "code": "busy", "message"}  too many
 #                                                     messages: not sent
 #   page to server   {"type": "name", "name": "..."}  its player's name
-#                    {"type": "chat", "text": "..."}
+#                    {"type": "chat", "text": "..."}  (a game's invite,
+#                                                     alone: a card of it;
+#                                                     "started": true, the
+#                                                     host's, as it starts)
 #                    ping (every 30 seconds)          answered pong
 defmodule Signalling.Online do
   @moduledoc false
   @behaviour WebSock
 
-  alias Signalling.{Chat, Limits, OnlineCount, Presence}
+  alias Signalling.{Chat, Limits, OnlineCount, Presence, Room}
 
   @impl true
   def init(page) do
@@ -43,8 +49,8 @@ defmodule Signalling.Online do
       {:ok, %{"type" => "name", "name" => name}} ->
         {:ok, %{page | name: Chat.name(name)}}
 
-      {:ok, %{"type" => "chat", "text" => said}} ->
-        say(Chat.text(said), page)
+      {:ok, %{"type" => "chat", "text" => said} = data} ->
+        say(Chat.text(said), data["started"] == true, page)
 
       _ ->
         {:ok, page}
@@ -59,16 +65,27 @@ defmodule Signalling.Online do
   def handle_info({:chat, message}, page),
     do: {:push, text(Map.put(message, :type, "chat")), page}
 
+  def handle_info({:card, room, card}, page),
+    do: {:push, text(%{type: "card", room: room, card: card}), page}
+
   def handle_info(_, page), do: {:ok, page}
 
   @impl true
   def terminate(_, _), do: :ok
 
-  defp say(nil, page), do: {:ok, page}
+  defp say(nil, _, page), do: {:ok, page}
 
-  defp say(said, page) do
+  # (an invite to a room that is not there, or with another secret, is
+  # said as text)
+  defp say(said, started, page) do
     if Limits.allow?(:chat, page.address) do
-      Chat.say(page.name, page.color, said)
+      with {code, secret} = invite <- Chat.invite(said),
+           {:ok, room, state} <- Room.card(code, secret) do
+        Chat.share(page.name, page.color, said, invite, room, state, started)
+      else
+        _ -> Chat.say(page.name, page.color, said)
+      end
+
       {:ok, page}
     else
       busy = %{type: "error", code: "busy", message: "Too many messages: wait a minute"}

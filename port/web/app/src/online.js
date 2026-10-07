@@ -64,8 +64,13 @@ onCount(null) while there is none; onMessages(messages) with the chat's
 messages, oldest first, at each new one; onNotice(text) when the server
 refuses a message; onState(state) as the WebSocket goes: "connecting"
 (the first time), "connected", or "offline" (lost or refused, or a server
-without the lobby: it tries again). Returns { say(text), setName(name),
-stop() }. */
+without the lobby: it tries again). Returns { say(text), share(invite),
+setName(name), stop() }.
+
+A message that is a game's invite, alone, is a game card (the server's:
+message.card, { room, secret, status, map, players, ... }), whose room the
+server tells again as it changes ("card"): each message of that room is
+then given the card as it is now (NETWORK.md, "Game cards"). */
 export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = () => {} }) {
 	const visitor = visitorId();
 	let socket = null;
@@ -115,6 +120,14 @@ export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = 
 			break;
 		case "chat":
 			add([data]);
+			break;
+		case "card":
+			/* (a card's room as it is now: the message keeps its secret) */
+			if (typeof data.room === "string" && data.card) {
+				messages = messages.map((message) => message.card?.room === data.room ?
+					{ ...message, card: { ...message.card, ...data.card } } : message);
+				onMessages(messages);
+			}
 			break;
 		case "error":
 			onNotice(data.message);
@@ -183,6 +196,9 @@ export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = 
 	return {
 		/* false if the lobby is not reached */
 		say: (text) => send({ type: "chat", text }),
+		/* the host's own game, as it starts: its card (false if the lobby is
+		not reached) */
+		share: (invite) => send({ type: "chat", text: invite, started: true }),
 		setName(next) {
 			name = next;
 			send({ type: "name", name });
