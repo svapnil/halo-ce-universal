@@ -12,7 +12,7 @@ worker/rooms.js; NETWORK.md).
   host comes up, and the host's game shows in the game's system link list.
 
 A link's number is the peer's in the room (the host is 0, joiners 1 to
-31), so a host has a link to each joiner, and a joiner one, to the host.
+15), so a host has a link to each joiner, and a joiner one, to the host.
 
 onStatus gets { state, invite, players, error, reconnecting }: state is
 "idle", "connecting", "hosting", "joined" or "error"; reconnecting is true

@@ -2682,11 +2682,12 @@ static char const *const server_settings_gametype_rows[] =
 /* the most players a co-op game hosted starts with (maximum_players') */
 #ifdef __EMSCRIPTEN__
 /* port (browser build): the most players a game hosted in a browser takes:
-32 on multiplayer maps, 8 in co-op. Each machine's traffic grows with the
-players, and a host's page has a page's bandwidth (port/web/NETWORK.md,
-"How it differs from upstream's") */
-#define WEB_MAXIMUM_PLAYERS 32
-#define WEB_COOPERATIVE_MAXIMUM_PLAYERS 8
+16 on multiplayer maps, 4 in co-op. What the host sends grows with the
+square of the players, all of it from one player's home connection and
+through the SFU on our bill (port/web/NETWORK.md, "How it differs from
+upstream's", row 18) */
+#define WEB_MAXIMUM_PLAYERS 16
+#define WEB_COOPERATIVE_MAXIMUM_PLAYERS 4
 #define COOPERATIVE_DEFAULT_PLAYERS WEB_COOPERATIVE_MAXIMUM_PLAYERS
 #else
 #define COOPERATIVE_DEFAULT_PLAYERS 16
@@ -2786,8 +2787,8 @@ static void web_maximum_players_help(void)
 	long tag_index = tag_loaded('ustr', SERVER_SETUP_HELP);
 	wchar_t *string = tag_index != NONE ? (wchar_t *)unicode_string_list_get_string(tag_index, MAXIMUM_PLAYERS_HELP) :
 		NULL;
-	wchar_t const *text = hosting_cooperative() ? L"The most players the game takes (up to 8)." :
-		L"The most players the game takes (up to 32).";
+	wchar_t const *text = hosting_cooperative() ? L"The most players the game takes (up to 4)." :
+		L"The most players the game takes (up to 16).";
 	long length = (long)ustrlen(text);
 
 	if (!string)

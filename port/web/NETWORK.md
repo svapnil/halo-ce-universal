@@ -54,13 +54,13 @@ is not in git. When a decision changes, update this list.
 | 9 | Create Game > Internet makes the room only when the game starts (Server Setup's START GAME), not when Server Setup opens, so Server Setup's INVITE LINK reads MADE WHEN THE GAME STARTS. The invite is then on the page (its toast and its bar) and in the lobby between games. No LAN games: Join Game > LAN and Create Game > LAN each show "LAN games are not supported in the browser. Create an Internet game and share its invite." and open nothing (decided 2026-10-06). | The server, and its invite, are made as Create Game opens, and Server Setup shows the invite. LAN games are hosted and found on the local network. | A room is a game being played, not one being set up. A browser has no local network: its games are internet games, through the rooms. (`?net=tabs`, the tests' pages of one browser, is not a LAN game of the menus.) | `menu_functions.c` (`multiplayer_host`, `server_start`: `p2p_set_hosting_allowed`; `web_lan_refused`), "The lobby" |
 | 10 | The clipboard is read only when the player presses PASTE LINK. `network.join_from_clipboard` is off. | The game reads the clipboard each time its window comes to the front, and joins an invite it finds there. | The browser asks the player's permission to read the clipboard; reading it unprompted would show that prompt for no reason. | `src/web_clipboard.c`, `app/src/game.js` |
 | 11 | A room ends when its host's page leaves it. A host whose WebSocket is lost (a blip, a deploy of the Fly machine) keeps playing, and its page takes the room back (`rehost`), with the same invite; joiners are not told. A deploy still drops native games. | The host's own process keeps hosting. | Rooms live in the signalling server's memory: the host's page holds what it takes to make its room again (decided 2026-10-06). | "Rooms and invites", "The machine" |
-| 12 | Limits: 31 joiners (32 machines) a room, 5 rooms and 20 joins a minute from an address, and the relay's caps for native games. | The game's own limits. | Each join costs SFU sessions, and the relay is shared. The room's 31 joiners match the game's 32 players (row 18). | "Rooms and invites", "The relay's limits" |
+| 12 | Limits: 15 joiners (16 machines) a room, 5 rooms and 20 joins a minute from an address, and the relay's caps for native games. | The game's own limits. | Each join costs SFU sessions, and the relay is shared. The room's 15 joiners match the game's 16 players (row 18). | "Rooms and invites", "The relay's limits" |
 | 13 | A joiner must have the host's `HALO_PORT_NETWORK_VERSION`. The rooms refuse other versions, and native games need a matching desktop release. | The same check, in `p2p.c`. | Matches upstream. A new version reaches browsers on deploy. | "The game's side" |
 | 14 | No Discord identity and no hardware id: `p2p_discord_identity` and `p2p_hardware_id` give empty values for browsers. | Discord name and id, hardware id. | A page has neither. | `web_p2p.c` |
 | 15 | A lobby beside the game, outside it: how many browsers have the site open, and a chat between them, using the player's profile name. | None. | The fork's own feature. | "The online count", "The lobby's chat" |
 | 16 | A page in a background tab keeps playing on a 33 ms timer. | The game runs at full speed. | Browsers throttle hidden pages, and a host that stopped would freeze its game for everyone. | `sdl_platform.c` (`web_wait_for_frame`) |
 | 17 | No cross-platform play for games hosted in a browser: they are for browsers only, and what the game says of itself (`p2p_set_game_listing`, `p2p_set_game_player_counts`: its map, game type, players, whether a match is on) goes to our signalling server's room only, for its live state (`/stats`), never to the MQTT brokers or the desktop Server Browser. | The same two functions list a public game in every desktop build's Server Browser, and feed Discord. | The owner's invariant (2026-10-06): browser-hosted games stay browser-only, and the server keeps a live model of them. | `web_p2p.c` ("the hosted game"), "The room's game" |
-| 18 | A game hosted in a browser takes at most 32 players on a multiplayer map, and 8 in co-op (Server Setup's MAXIMUM PLAYERS stops there, and says so; co-op starts at 8). | Up to 128 players; co-op starts at 16. | A machine's traffic grows with the players, and a host's page has a page's bandwidth, not a server's (decided 2026-10-06). The rooms take as many machines, a player to a page: 31 joiners and the host (decided 2026-10-06, up from 15 joiners; the host's page carries a link to each). | `menu_functions.c` (`WEB_MAXIMUM_PLAYERS`, `server_settings_maximum_players_limit`, `web_maximum_players_help`) |
+| 18 | A game hosted in a browser takes at most 16 players on a multiplayer map, and 4 in co-op (Server Setup's MAXIMUM PLAYERS stops there, and says so; co-op starts at 4). The rooms take as many machines, a player to a page: 15 joiners and the host. | Up to 128 players; co-op starts at 16. | What a host sends grows with the square of the players: each joiner gets every player's state, and the host sends it to each joiner, from one player's home connection, all of it through the SFU on our bill ("Bandwidth and its cost"). At 16 players that is about 4 Mbit/s from the host and 2 GB an hour to pay for; at 32 it would be about 15 Mbit/s, which many hosts do not have, and 7 GB. Co-op sends far more for each player (its enemies): about 250 KiB a second, so 4 players. (Decided 2026-10-06, by the owner, after 32 and 8.) | `menu_functions.c` (`WEB_MAXIMUM_PLAYERS`, `server_settings_maximum_players_limit`, `web_maximum_players_help`), `Signalling.Room` (`@maximum_joiners`) |
 
 If upstream changes any of these on its side, the browser build may need a
 matching change (in `web_p2p.c`, `web_p2p_select.c`, the relay or the page),
@@ -137,7 +137,7 @@ working and the game is not touched.
 The Worker's rooms (dead code: "The signalling's server") know no `rehost`
 (`protocol`): their hosts' pages would not come back.
 
-Limits: 31 joiners (32 machines, as the game's 32 players: "How it differs
+Limits: 15 joiners (16 machines, as the game's 16 players: "How it differs
 from upstream's", row 18); an address makes at most 5 rooms and 20
 joins a minute (each is SFU sessions on the account's bill). A joiner that has not answered the SFU's
 offer 30 seconds after joining is closed. A WebSocket from a page of another
@@ -170,7 +170,7 @@ without a word to the room.
 
 | `type` | Fields | Meaning |
 | --- | --- | --- |
-| `welcome` | `room`, `peer`; to the host also `secret`, and to a `host` also `hostKey` | Accepted. `peer` is this page's number in the room: the host is 0, joiners 1 to 31. The host's page makes the invite from its own address, `room` and `secret`, and keeps `hostKey` for a `rehost`. |
+| `welcome` | `room`, `peer`; to the host also `secret`, and to a `host` also `hostKey` | Accepted. `peer` is this page's number in the room: the host is 0, joiners 1 to 15. The host's page makes the invite from its own address, `room` and `secret`, and keeps `hostKey` for a `rehost`. |
 | `offer` | `sdp`; to the host also `session` | The SFU's offer for this page's connection. Answer with `answer`. The host keeps `session` for a `rehost`. |
 | `link` | `peer`, `id`, `netVersion`, `reliable`, `unreliable` | A link to `peer` is made. Create the two data channels with these SCTP ids (refer to "Data channels"). The host gets one for each joiner; a joiner gets one, to the host. |
 | `unlink` | `peer`, `reason` | The link to `peer` ended: `left`, `dropped` or `failed`. Close its channels. |
@@ -210,6 +210,34 @@ joiner              server                                    host
   │                   │                                          │── "ready" on reliable
   │◀═══════════ game traffic through the SFU, both ways ═════════▶│
 ```
+
+## Bandwidth and its cost
+
+Every byte of a game between browsers goes through the SFU: a page never
+reaches another directly. Realtime bills what it delivers, $0.05 a GB past
+the account's first 1,000 GB a month (which TURN shares), so a game costs
+what reaches every page in it, the host's and each joiner's, on our bill.
+
+What a game sends, from desktop builds' games through the relay (the same
+game messages): a joiner sends its host about 5 KiB a second, however many
+play; the host sends each joiner about 11 KiB a second with 2 players and
+about 37 with 18, each player's state to every joiner, so about 1.6 KiB a
+second more for each player. The host sends that to each joiner: what it
+sends, and what we pay for, grows with the square of the players.
+Estimated so (not measured past 18 players):
+
+| Players | Each joiner gets | The host sends | The SFU delivers, an hour |
+| --- | --- | --- | --- |
+| 4 | ~14 KiB/s | ~40 KiB/s (0.3 Mbit/s) | ~0.2 GB |
+| 8 | ~21 KiB/s | ~150 KiB/s (1.2 Mbit/s) | ~0.7 GB |
+| 16 | ~34 KiB/s | ~510 KiB/s (4.2 Mbit/s) | ~2.2 GB |
+| 32 | ~60 KiB/s | ~1.9 MB/s (15 Mbit/s) | ~7.4 GB |
+| co-op, for each player | ~250 KiB/s (its enemies; a big game, through the relay) | | |
+
+So the caps (16 players, 4 in co-op: "How it differs from upstream's",
+row 18): the host's upload, from one player's home connection, is the first
+limit (a host that cannot keep up slows the game for everyone), and our
+bill the second. A real game of 16 browsers has not been measured.
 
 ## Data channels
 
@@ -334,7 +362,7 @@ The game's own menus host and join, as on the desktop: the PC version's
   once, the host alone in the map: the lobby asks the server for an
   immediate start (`web_host_start_update`). After each game the host is in
   the lobby again, with the room open, and starts the next as upstream's
-  does. MAXIMUM PLAYERS goes to 32, or 8 in co-op (row 18 of "How it
+  does. MAXIMUM PLAYERS goes to 16, or 4 in co-op (row 18 of "How it
   differs from upstream's").
 - Create Game > LAN and Join Game > LAN: not in a browser. Each says so (the
   game's own message box) and opens nothing (`web_lan_refused`).
@@ -604,7 +632,7 @@ of our own, on the relay's machine. It speaks "Signalling messages" as
 The Worker's own rooms (`worker/rooms.js`: a `GameRoom` Durable Object for
 each), which the pages used before, are dead code: `SIGNALLING_URL` is set,
 so no page reaches them. They are not kept in step with this server: they
-have no `rehost`, no `game`, and take 15 joiners. They wait to be removed
+have no `rehost` and no `game`. They wait to be removed
 ("Removing the Worker's rooms"); change them for nothing.
 
 What it is for: what a server that is always there can do and a Durable
@@ -868,7 +896,7 @@ among `SIGNALLING_ORIGINS` (nor `RELAY_ORIGINS`): its pages get no rooms.
 
 To do: they are dead code. (Commenting `SIGNALLING_URL` out, and
 `npm run deploy`, would still bring them back, without what they lack:
-hosts that come back, the room's game, 31 joiners.) What goes:
+hosts that come back, and the room's game.) What goes:
 
 - `worker/rooms.js`'s `GameRoom` and `handleRooms`, and their route in
   `worker/worker.js` (`/net/signalling` stays: it is how the pages find
