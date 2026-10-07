@@ -1007,6 +1007,52 @@ back. */
 	font-size: 12px;
 }
 
+/* how many others type: a line under the list, its room kept when empty,
+the dots pulsing (still, for those who ask for less motion) */
+.chat-typing {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: none;
+	height: 18px;
+	margin: 0;
+	padding: 0 12px 2px;
+	font-size: 11px;
+	opacity: 0.75;
+}
+
+.chat-typing-dots {
+	display: flex;
+	gap: 2px;
+}
+
+.chat-typing-dots span {
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background: currentColor;
+	animation: chat-typing 1.2s ease-in-out infinite;
+}
+
+.chat-typing-dots span:nth-child(2) {
+	animation-delay: 0.2s;
+}
+
+.chat-typing-dots span:nth-child(3) {
+	animation-delay: 0.4s;
+}
+
+@keyframes chat-typing {
+	0%, 60%, 100% { opacity: 0.3; }
+	30% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.chat-typing-dots span {
+		animation: none;
+	}
+}
+
 .chat-form {
 	display: flex;
 	gap: 6px;

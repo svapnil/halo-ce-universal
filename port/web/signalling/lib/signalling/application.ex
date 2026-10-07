@@ -18,6 +18,7 @@
 #   Signalling.Presence who is online (Phoenix's Presence)
 #   Signalling.OnlineCount  the count, as the pages get it
 #   Signalling.Chat     the lobby's chat
+#   Signalling.Typing   who types in it (the pages get how many)
 defmodule Signalling.Application do
   @moduledoc false
   use Application
@@ -43,6 +44,7 @@ defmodule Signalling.Application do
       Signalling.Presence,
       Signalling.OnlineCount,
       Signalling.Chat,
+      Signalling.Typing,
       {Bandit,
        plug: Signalling.Router,
        scheme: :http,

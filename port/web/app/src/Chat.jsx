@@ -20,13 +20,15 @@ function clock(at) {
 }
 
 /* The lobby's chat (online.js), to the right of the game: every page with
-the site open, how many, and what they say. Each name in its player's colour
+the site open, how many, what they say, and how many of the others type
+(never who: a line over the input, its room kept so that the list does not
+move). Each name in its player's colour
 (the server's, by the browser's visitor id); the time over the messages after
 a quiet while, not beside each. Its keys are its own: the game takes the
 window's (as the panels over it, App.jsx), and Esc gives the keyboard back to
 the game. The button at the header's left puts it away (onHide): beside the
 game, to a narrow strip (ChatRail); over it, closed. */
-export function ChatPane({ count, messages, notice, state, onSay, onDone, onHide, hideLabel }) {
+export function ChatPane({ count, messages, notice, state, typing, onSay, onTyping, onDone, onHide, hideLabel }) {
 	const connected = state === "connected" && count !== null;
 	const waiting = state === "offline" ? "Offline: trying again…" : "Connecting…";
 	const list = useRef(null);
@@ -94,10 +96,21 @@ export function ChatPane({ count, messages, notice, state, onSay, onDone, onHide
 				])}
 			</ol>
 			{notice && <p className="chat-notice" role="status">{notice}</p>}
+			<p className="chat-typing" aria-live="polite">
+				{typing > 0 && <>
+					<span className="chat-typing-dots" aria-hidden="true"><span /><span /><span /></span>
+					{typing === 1 ? "Someone is typing…" : `${typing.toLocaleString()} people are typing…`}
+				</>}
+			</p>
 			<form className="chat-form" onSubmit={submit}>
 				<input className="chat-input" value={text} maxLength={200} placeholder={connected ? "Message the lobby" : waiting}
 					disabled={!connected} aria-label="Message" enterKeyHint="send" autoComplete="off"
-					onChange={(event) => setText(event.target.value)} />
+					onChange={(event) => {
+						setText(event.target.value);
+						if (event.target.value.trim()) {
+							onTyping();
+						}
+					}} />
 				<button type="submit" className="primary-button chat-send" disabled={!connected || !text.trim()}>
 					Send
 				</button>

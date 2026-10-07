@@ -602,14 +602,24 @@ upright.
 - **Times** are a line across the list over a message that comes 5 minutes
   or more after the one before (and over the first), not beside each
   message; a message's own time is its tooltip.
-
 - **Messages.** Page to server: `{"type": "name", "name"}` (as it connects,
-  and when the name changes) and `{"type": "chat", "text"}`. Server to
-  page: `{"type": "history", "messages"}` as it connects (the last 50, in
-  memory: a restart forgets them), then `{"type": "chat", "id", "name",
-  "color", "text", "at"}` for each, and `{"type": "error", "code": "busy"}`
-  for a message refused. A name is at most 11 characters, a message 200;
-  control characters are spaces. An address says at most 20 a minute.
+  and when the name changes), `{"type": "chat", "text"}` and
+  `{"type": "typing"}`. Server to page: `{"type": "history", "messages"}`
+  as it connects (the last 50, in memory: a restart forgets them), then
+  `{"type": "chat", "id", "name", "color", "text", "at"}` for each,
+  `{"type": "typing", "count"}` as it connects and as it changes, and
+  `{"type": "error", "code": "busy"}` for a message refused. A name is at
+  most 11 characters, a message 200; control characters are spaces. An
+  address says at most 20 a minute.
+- **Typing.** A line under the list says how many others type: "Someone is
+  typing…", "3 people are typing…". Never who: a name would carry what the
+  blocked words keep from the others. A page says `typing` at most every 3
+  seconds while its player types (`online.js`); `Signalling.Typing` keeps
+  it for 5, until the page's message, or until its WebSocket closes. It
+  tells the pages only when the typing pages change (not at each repeat),
+  and each page its own count, without itself. A page changes them only by
+  typing anew after a message (20 a minute) or after 5 quiet seconds, so
+  the indicator needs no limit of its own.
 - **Blocked words.** A message whose text or name has one of
   `signalling/lib/signalling/chat_blocked.txt`'s (`Signalling.ChatFilter`:
   letters only, look-alikes such as `1` and `3` undone, each letter
