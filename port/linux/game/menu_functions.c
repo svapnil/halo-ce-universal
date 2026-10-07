@@ -2095,6 +2095,10 @@ struct network_game *network_game_client_get_game(void *client);
 struct network_game *network_game_server_get_game(void *server);
 short network_game_client_get_local_machine_index(void);
 short network_game_client_get_seconds_to_game_start(void *client);
+#ifdef __EMSCRIPTEN__
+void network_game_client_request_immediate_start(void);
+boolean network_game_server_lobby_is_open(struct network_game_server *server);
+#endif
 boolean network_player_is_valid(struct network_player *player);
 boolean playlist_profile_get(long index, struct game_variant *variant);
 boolean playlist_profile_get_display_name(long index, wchar_t *name);
@@ -2151,6 +2155,16 @@ static struct
 	while the game runs, never written down */
 	char game_password[PASSWORD_LENGTH + 1];
 } multiplayer = { 0, 0, 0, { 0 }, 0, { 0 }, 0, 0, 0, 0, { 0 }, NUMBEROF(maximum_players) - 1 };
+
+#ifdef __EMSCRIPTEN__
+/* port (browser build): an internet game's host, past Server Setup, starts
+the game at once (server_start, web_host_start_update) */
+static struct
+{
+	boolean pending;
+	unsigned long last_request;
+} web_host_start;
+#endif
 
 /* ---- a text field (Direct Link's link, the game's name): the keyboard
 types into it (Ctrl+V pastes), its row's A (enter) is done, B (escape)
@@ -2305,7 +2319,15 @@ static boolean multiplayer_host(struct widget_instance *widget, struct event_rec
 	multiplayer_mode_set(widget);
 	if (!multiplayer_player(controller))
 		return FALSE;
+#ifdef __EMSCRIPTEN__
+	/* port (browser build): no room yet. It is made as the game starts,
+	past Server Setup (server_start), so that a room is a game being played
+	(port/web/NETWORK.md, "How it differs from upstream's") */
+	p2p_set_hosting_allowed(FALSE);
+	web_host_start.pending = FALSE;
+#else
 	p2p_set_hosting_allowed(multiplayer.mode == _multiplayer_mode_host_internet);
+#endif
 	/* (in the server browser, if PUBLIC: Server Setup's LISTING, which a
 	new game starts with as network.host_public says) */
 	multiplayer.game_private = !config_boolean("network.host_public");
@@ -2948,6 +2970,18 @@ static boolean server_start(void)
 	}
 	else if (!gametype_setup_apply())
 		return campaign_fail();
+#ifdef __EMSCRIPTEN__
+	/* port (browser build): an internet game's room is made now, and the
+	game starts at once, its host alone in the map (the lobby,
+	web_host_start_update): friends join it in progress. Later games, after
+	the scores, start from the lobby, as upstream's */
+	if (global_network_game_server_get() && multiplayer.mode == _multiplayer_mode_host_internet)
+	{
+		p2p_set_hosting_allowed(TRUE);
+		web_host_start.pending = TRUE;
+		web_host_start.last_request = 0;
+	}
+#endif
 	return global_network_game_server_get() != NULL;
 }
 
@@ -4106,6 +4140,31 @@ static void lobby_map_show(struct widget_instance *description, char const *map_
 		widget->parameters.text_box.string_list_index = level;
 }
 
+#ifdef __EMSCRIPTEN__
+/* port (browser build): the lobby that Server Setup opens starts its game at
+once, as the host's (server_start). The request is the host's own (the
+server takes it from no other machine), and is asked again until the game
+has started: the lobby's countdown is paused until the lobby is made, and
+the host's machine is in the pregame a frame or so after */
+static void web_host_start_update(void *client, short state)
+{
+	struct network_game_server *server = global_network_game_server_get();
+	unsigned long now = system_milliseconds();
+
+	if (!web_host_start.pending)
+		return;
+	if (!server || !client || !network_game_server_lobby_is_open(server))
+	{
+		web_host_start.pending = FALSE;
+		return;
+	}
+	if (state != _client_state_pregame || (web_host_start.last_request && now - web_host_start.last_request < 500))
+		return;
+	web_host_start.last_request = now ? now : 1;
+	network_game_client_request_immediate_start();
+}
+#endif
+
 /* "port lobby update" */
 static void lobby_update(struct widget_instance *list)
 {
@@ -4116,6 +4175,9 @@ static void lobby_update(struct widget_instance *list)
 	wchar_t text[LOBBY_TEXT_LENGTH];
 	short index;
 
+#ifdef __EMSCRIPTEN__
+	web_host_start_update(client, state);
+#endif
 	lobby_player_count = 0;
 	for (index = 0; game && state >= _client_state_pregame && index < HALO_PORT_MAXIMUM_NETWORK_PLAYERS; index++)
 	{

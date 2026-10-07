@@ -31,6 +31,45 @@ Status:
 - To do: moderation for the lobby's chat: it has length and rate limits, and
   blocked words, but no mute, report or ban (refer to "The lobby's chat").
 
+## How it differs from upstream's
+
+Multiplayer in the browser is upstream's game and menus, but it does not
+always work the way the desktop builds do. Each difference below is a
+product decision the fork has made. During a merge from upstream, a change
+that touches one of them is a behavioural conflict: ask the owner what to
+do (`AGENTS.md`, "Syncing with upstream") rather than taking either side.
+The fork's decisions are kept here, in a tracked file, because `AGENTS.md`
+is not in git. When a decision changes, update this list.
+
+| # | The browser build | Upstream (desktop builds) | Why | Where |
+| --- | --- | --- | --- | --- |
+| 1 | Browsers play each other over WebRTC data channels through Cloudflare Realtime SFU, in rooms on our signalling. | `p2p.c`'s tunnel: MQTT brokers, STUN, hole punching, KCP, its own encryption. | A page has no UDP or TCP sockets. DTLS encrypts the channels and SCTP makes them reliable, so KCP and the tunnel's encryption are not used. | `src/web_p2p.c`, `app/src/sfu_transport.js`, `signalling/` |
+| 2 | A browser's invite is `https://<site>/#join=<room>.<secret>`. | `halo://join/...` | A link anyone can open in a browser. The secret is in the fragment, which is never sent to a server. | "Rooms and invites" |
+| 3 | A page hosts for browsers only. Desktop builds cannot join a browser's game. | Any desktop build can host anyone. | Hosting desktop players would put every joiner's traffic through the relay, and a host page in a background tab would slow the game for everyone. | `web_p2p_select.c` (`p2p_native_set_hosting_allowed(0)`) |
+| 4 | A page joins desktop builds' games (by invite, Direct Link or the Server Browser) by running upstream's `p2p.c` unchanged, with its sockets lent by our relay on Fly.io. | Direct sockets. | The browser speaks the desktop's protocol exactly, so it keeps working as upstream changes it. | "Native games" |
+| 5 | A browser's room is never listed in the Server Browser. Server Setup hides LISTING and PASSWORD, and `p2p_set_hosting_public`, `p2p_set_hosting_password` and `p2p_set_game_listing` keep nothing. | Public lobbies, with a password since network version 20. | Desktop builds could not join a listed browser room (see 3). Listing browsers' rooms for other browsers is a to-do. | `menu_functions.c` (`server_settings_update`), `web_p2p.c` |
+| 6 | A browser can join a desktop build's password-protected public game. The game's own text field asks for the password. | The same. | Matches upstream. | `web_p2p_select.c` (`p2p_listing_unlock`) |
+| 7 | A host starts its game alone, in any game type, and the players it invites join the game in progress. The first game of an internet host starts as soon as Server Setup's START GAME is pressed: no lobby, no countdown. After each game's scores the host is back in the lobby, as upstream, and starts the next from there (the room stays open). | The game waits in the lobby for its minimum players (and teams), then counts down. | A friend opening an invite should be playing at once, and a room should be a game being played (decided 2026-10-06; the lobby between games was the owner's choice, over starting the next game on its own). | `network_server_manager.c` (`server_ok_to_countdown`, `network_game_server_game_can_start`), `menu_functions.c` (`server_start`, `web_host_start_update`), "The lobby" |
+| 8 | A page opened with an invite (`#join=` or `#native=`) skips the menus. It joins the game in progress from the main menu, then opens the menus' lobby. | The player joins through the menus, or from the clipboard at start-up. | One click from an invite to playing. | `src/web_lobby.c`, `app/src/lobby.js` |
+| 9 | Create Game > Internet makes the room only when the game starts (Server Setup's START GAME), not when Server Setup opens, so Server Setup's INVITE LINK reads MADE WHEN THE GAME STARTS. The invite is then on the page (its toast and its bar) and in the lobby between games. Create Game > LAN makes no room. | The server, and its invite, are made as Create Game opens, and Server Setup shows the invite. | A room is a game being played, not one being set up. A browser has no LAN, so a LAN game gets no room and no invite. | `menu_functions.c` (`multiplayer_host`, `server_start`: `p2p_set_hosting_allowed`), "The lobby" |
+| 10 | The clipboard is read only when the player presses PASTE LINK. `network.join_from_clipboard` is off. | The game reads the clipboard each time its window comes to the front, and joins an invite it finds there. | The browser asks the player's permission to read the clipboard; reading it unprompted would show that prompt for no reason. | `src/web_clipboard.c`, `app/src/game.js` |
+| 11 | A room ends when its host's WebSocket closes. Games already linked go on, but no one else can join until the host hosts again. A deploy of the Fly machine drops native games. | The host's own process keeps hosting. | Rooms live in the signalling server's memory. | "Rooms and invites", "The machine" |
+| 12 | Limits: 15 joiners (16 machines) a room, 5 rooms and 20 joins a minute from an address, and the relay's caps for native games. | The game's own limits. | Each join costs SFU sessions, and the relay is shared. | "Rooms and invites", "The relay's limits" |
+| 13 | A joiner must have the host's `HALO_PORT_NETWORK_VERSION`. The rooms refuse other versions, and native games need a matching desktop release. | The same check, in `p2p.c`. | Matches upstream. A new version reaches browsers on deploy. | "The game's side" |
+| 14 | No Discord identity and no hardware id: `p2p_discord_identity` and `p2p_hardware_id` give empty values for browsers. | Discord name and id, hardware id. | A page has neither. | `web_p2p.c` |
+| 15 | A lobby beside the game, outside it: how many browsers have the site open, and a chat between them, using the player's profile name. | None. | The fork's own feature. | "The online count", "The lobby's chat" |
+| 16 | A page in a background tab keeps playing on a 33 ms timer. | The game runs at full speed. | Browsers throttle hidden pages, and a host that stopped would freeze its game for everyone. | `sdl_platform.c` (`web_wait_for_frame`) |
+
+If upstream changes any of these on its side, the browser build may need a
+matching change (in `web_p2p.c`, `web_p2p_select.c`, the relay or the page),
+or the decision may need revisiting. Some examples:
+- a new `p2p.h` function: decide what a browser's room does with it (as with
+  5 and 14);
+- a new way to host or list games: decide whether browsers' rooms take part
+  (3 and 5);
+- a change to the countdown or join-in-progress rules: check 7 and 8;
+- a new clipboard or invite behaviour: check 2 and 10.
+
 ## Parts
 
 ```
@@ -194,6 +233,9 @@ build chooses it. Upstream's files change only in a few places, each in
 
 - `source/networking/network_server_manager.c`: a host starts its game
   alone (`server_ok_to_countdown`, `network_game_server_game_can_start`).
+- `port/linux/game/menu_functions.c`: an internet game's room is made, and
+  its first game started, at Server Setup's START GAME (`multiplayer_host`,
+  `server_start`, `web_host_start_update`; "The lobby").
 - `port/linux/game/menu_functions.c`: Video Setup shows neither RESOLUTION
   nor WINDOW SIZE (`video_rows_show`; `port/web/README.md`), and Server
   Setup neither LISTING nor PASSWORD (`server_settings_update`): a
@@ -252,11 +294,16 @@ The game's own menus host and join, as on the desktop: the PC version's
 (upstream's, `display.menus = "pc"`). Their Multiplayer has, for a browser:
 
 - Create Game > Internet: the game hosts, and the page makes it a room
-  (`web_p2p.c` tells it, as the game listens), whose invite
-  (`https://<site>/#join=<room>.<secret>`) the page shows to copy and the
-  menus show too (Server Settings' invite, the lobby's "Invite link
-  copied": `p2p_invite_link`, which the page writes into the game). Create
-  Game > LAN makes no room (`p2p_set_hosting_allowed`).
+  (`web_p2p.c` tells it, as the game listens and hosting is allowed),
+  whose invite (`https://<site>/#join=<room>.<secret>`) the page shows to
+  copy and the menus show too (the lobby's "Invite link copied":
+  `p2p_invite_link`, which the page writes into the game). Hosting is
+  allowed only once Server Setup's START GAME is pressed (`server_start`;
+  until then `multiplayer_host` holds it off), and the game then starts at
+  once, the host alone in the map: the lobby asks the server for an
+  immediate start (`web_host_start_update`). After each game the host is in
+  the lobby again, with the room open, and starts the next as upstream's
+  does. Create Game > LAN makes no room (`p2p_set_hosting_allowed`).
 - Join Game > Direct Link: PASTE LINK joins the invite on the clipboard,
   a browser's (the page joins its room) or a desktop build's (the desktop's
   internet play, through the relay). The clipboard is read then only
