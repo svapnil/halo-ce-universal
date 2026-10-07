@@ -23,6 +23,14 @@ Status:
   Fly.io, by its invite or from the PC menus' server browser (refer to
   "Native games"). A page hosts for browsers only.
 - To do: browsers' rooms in the server browser (rooms that list themselves).
+- To do: private games, with a password. Every browser game is public now:
+  its card in the lobby's chat carries its invite, secret and all, to every
+  visitor ("Game cards"), and Server Setup has neither LISTING nor PASSWORD
+  in the browser (row 5 of "How it differs from upstream's"). A PRIVATE game
+  would have no card (and no listing), and a password that the signalling's
+  server checks on each join (a room's secret alone lets anyone with the
+  invite in, as a desktop build's password does not guard its invite
+  either). Rows 5 and 19 change with it.
 - To do: remove the Worker's rooms (Cloudflare Durable Objects): dead code,
   which no page uses and which is not kept in step with the signalling's
   server (refer to "Removing the Worker's rooms").
