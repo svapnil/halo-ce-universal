@@ -2287,6 +2287,18 @@ static void text_field_show(struct widget_instance *value, char const *text, boo
 
 /* ---- the menu */
 
+#ifdef __EMSCRIPTEN__
+/* port (browser build): no LAN games, hosted or joined. A browser has no
+local network: its games are internet games, through the page's rooms
+(port/web/NETWORK.md, "How it differs from upstream's"). Both LAN items
+say so, and open nothing */
+static boolean web_lan_refused(void)
+{
+	display_error_text_deferred(L"LAN games are not\r\nsupported in the browser.\r\nCreate an Internet game\r\nand share its invite.", NONE);
+	return campaign_fail();
+}
+#endif
+
 /* "mp type set mode": the item's (by its name) */
 static void multiplayer_mode_set(struct widget_instance *widget)
 {
@@ -2317,6 +2329,12 @@ static boolean multiplayer_host(struct widget_instance *widget, struct event_rec
 	boolean *widget_deleted)
 {
 	multiplayer_mode_set(widget);
+#ifdef __EMSCRIPTEN__
+	/* port (browser build): no LAN game made ("mp type set mode", next,
+	says why) */
+	if (multiplayer.mode == _multiplayer_mode_host_lan)
+		return TRUE;
+#endif
 	if (!multiplayer_player(controller))
 		return FALSE;
 #ifdef __EMSCRIPTEN__
@@ -2662,7 +2680,17 @@ static char const *const server_settings_gametype_rows[] =
 };
 
 /* the most players a co-op game hosted starts with (maximum_players') */
+#ifdef __EMSCRIPTEN__
+/* port (browser build): the most players a game hosted in a browser takes:
+32 on multiplayer maps, 8 in co-op. Each machine's traffic grows with the
+players, and a host's page has a page's bandwidth (port/web/NETWORK.md,
+"How it differs from upstream's") */
+#define WEB_MAXIMUM_PLAYERS 32
+#define WEB_COOPERATIVE_MAXIMUM_PLAYERS 8
+#define COOPERATIVE_DEFAULT_PLAYERS WEB_COOPERATIVE_MAXIMUM_PLAYERS
+#else
 #define COOPERATIVE_DEFAULT_PLAYERS 16
+#endif
 /* Server Setup's help for co-op's FRIENDLY FIRE and EXTRA ENEMIES, by
 their choices, and EXTRA ENEMIES' PER PLAYER and MULTIPLIER (its
 help_strings, tools/port_settings.py) */
@@ -2730,6 +2758,47 @@ static void server_settings_private_set(boolean private_game)
 	}
 }
 
+/* the highest of maximum_players[] Server Setup may choose (the browser's
+caps: WEB_MAXIMUM_PLAYERS) */
+static short server_settings_maximum_players_limit(void)
+{
+	short last = NUMBEROF(maximum_players) - 1;
+#ifdef __EMSCRIPTEN__
+	short cap = hosting_cooperative() ? WEB_COOPERATIVE_MAXIMUM_PLAYERS : WEB_MAXIMUM_PLAYERS;
+
+	while (last > 0 && maximum_players[last] > cap)
+		last--;
+#endif
+	return last;
+}
+
+#ifdef __EMSCRIPTEN__
+/* port (browser build): MAXIMUM PLAYERS' help says the browser's cap. The
+help is its string list's, drawn from the list each frame, so its string is
+written over in the loaded list (each text shorter than the "(up to 128)"
+it replaces) */
+#define SERVER_SETUP_HELP "pc\\main_menu\\multiplayer_type_select\\server_settings\\help_strings"
+#define MAXIMUM_PLAYERS_HELP 2
+
+static void web_maximum_players_help(void)
+{
+	static long capacity = -1;
+	long tag_index = tag_loaded('ustr', SERVER_SETUP_HELP);
+	wchar_t *string = tag_index != NONE ? (wchar_t *)unicode_string_list_get_string(tag_index, MAXIMUM_PLAYERS_HELP) :
+		NULL;
+	wchar_t const *text = hosting_cooperative() ? L"The most players the game takes (up to 8)." :
+		L"The most players the game takes (up to 32).";
+	long length = (long)ustrlen(text);
+
+	if (!string)
+		return;
+	if (capacity < 0)
+		capacity = (long)ustrlen(string);
+	if (length <= capacity)
+		csmemcpy(string, text, (length + 1) * sizeof(wchar_t));
+}
+#endif
+
 /* "server settings init": the game's name (player 1's, else the one given
 last), the most players, the gametype's copy (once: the screen is made
 again on coming back from an option's screen) */
@@ -2747,6 +2816,8 @@ static boolean server_settings_initialize(struct widget_instance *list)
 		player_ui_get_active_player_profile(0, &profile);
 		ustrncpy(multiplayer.game_name, profile.player_name, NUMBEROF(multiplayer.game_name) - 1);
 	}
+	*server_settings_maximum_players_index() = (short)PIN(*server_settings_maximum_players_index(), 0,
+		server_settings_maximum_players_limit());
 	if (spinner)
 		spinner->parameters.list.selected_index = *server_settings_maximum_players_index();
 	/* (PUBLIC or PRIVATE: this game's; the screen is made again on coming
@@ -2773,9 +2844,16 @@ static void server_settings_update(struct widget_instance *list)
 	struct widget_instance *row = named(list, "op_server_name", 0);
 	char text[TEXT_FIELD_LENGTH];
 
+#ifdef __EMSCRIPTEN__
+	web_maximum_players_help();
+#endif
 	if (spinner)
+	{
+		/* (past the browser's cap, the spinner comes back to it) */
 		*server_settings_maximum_players_index() = (short)PIN(spinner->parameters.list.selected_index, 0,
-			NUMBEROF(maximum_players) - 1);
+			server_settings_maximum_players_limit());
+		spinner->parameters.list.selected_index = *server_settings_maximum_players_index();
+	}
 	wide_to_text(multiplayer.game_name, text, sizeof(text));
 	text_field_show(named(list, "server_name_value", 0), text, text_field_editing(row));
 	if (multiplayer.mode != _multiplayer_mode_host_internet)
@@ -2956,7 +3034,7 @@ static boolean server_start(void)
 	if (text_field_editing(NULL))
 		text_field_end(TRUE);
 	network_game_server_port_set_settings(multiplayer.game_name,
-		maximum_players[PIN(*server_settings_maximum_players_index(), 0, NUMBEROF(maximum_players) - 1)]);
+		maximum_players[PIN(*server_settings_maximum_players_index(), 0, server_settings_maximum_players_limit())]);
 	/* (its listing's password: a PUBLIC internet game's, else none) */
 	p2p_set_hosting_password(multiplayer.mode == _multiplayer_mode_host_internet && !server_settings_private() ?
 		multiplayer.game_password : NULL);
@@ -5118,6 +5196,10 @@ boolean pc_menu_event_function_invoke(
 		{
 			lan_mode = strstr(widget->name, "_lan_") != NULL;
 			multiplayer_mode_set(widget);
+#ifdef __EMSCRIPTEN__
+			if (multiplayer.mode == _multiplayer_mode_host_lan || multiplayer.mode == _multiplayer_mode_lan)
+				return web_lan_refused();
+#endif
 			/* (Create's: the map list only for a game made, "join controller
 			to mp game" before; it fails with the game's port in use, by
 			another copy of the game) */
