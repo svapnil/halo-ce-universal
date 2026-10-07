@@ -148,6 +148,12 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 			// (web_clipboard.c), not each time the game comes to the front,
 			// which would have the browser ask the player each time.
 			window.ENV.HALO_NET_JOIN_FROM_CLIPBOARD = "0";
+			// No Halo Custom Edition maps (game.custom_edition): the page has
+			// no custom_maps folder to put them in, and WebGL 2 cannot sample
+			// their textures' channel orders (xbox_textures.c). The map lists
+			// have no CUSTOM kinds (menu_functions.c), and a game on one is
+			// refused with a word to that effect.
+			window.ENV.HALO_CUSTOM_EDITION = "0";
 			new URLSearchParams(location.search).forEach((value, name) => {
 				if (name.startsWith("HALO_")) {
 					window.ENV[name] = value || "1";

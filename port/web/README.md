@@ -220,6 +220,27 @@ changed.
 - **Time.** The browser's monotonic clock counts from 1970. `GetTickCount`
   counts from the start of the game, as the Xbox counts from boot, because
   the game keeps milliseconds in `long` and `float` variables.
+- **No Custom Edition maps.** The desktop builds run Halo Custom Edition
+  maps from a `custom_maps` folder (upstream, 2026-10-07: `game.custom_edition`,
+  `docs/custom_edition_caches.md`). The browser build does not: the page
+  sets `game.custom_edition` off (`game.js`), the map lists pass over the
+  CUSTOM SINGLEPLAYER and CUSTOM MULTIPLAYER kinds (`menu_functions.c`,
+  `map_kind_offered`), and a page joining a desktop build's game on one
+  leaves with "This game is on `<map>`, a Halo Custom Edition map, which the
+  browser can't play" (`custom_edition_cache.c`). Its memory window and
+  texture cache stay Android's (128 MB and 22 MB: `platform.h`,
+  `halo_port_capacity.h`), not the desktop's 512 MB and 256 MB, which
+  Custom Edition maps need. To support them one day (decided 2026-10-07:
+  later, not now): a place for the player's maps (the Origin Private File
+  System, or an upload); the texture channel orders of Halo PC, which the
+  desktop builds sample with a GL texture swizzle that WebGL 2 lacks, so
+  the texels would be rearranged on the CPU as `swap_red_and_blue` does
+  (`xbox_textures.c`); the Custom Edition tag cache's address
+  (`0x40440000`) skipped by the heap as the Xbox window is
+  (`xbox_memory.c`); and the larger window and cache, with
+  `platform_contiguous_alloc` zeroing only pages that were used before
+  (fresh memory is zero already), so that a 256 MB cache does not touch 256
+  MB at start.
 
 ### Calls with incorrect types
 
