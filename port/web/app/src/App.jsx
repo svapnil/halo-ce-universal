@@ -102,11 +102,13 @@ export default function App() {
 	const [messages, setMessages] = useState([]);
 	const [chatNotice, setChatNotice] = useState("");
 	const [chatState, setChatState] = useState("connecting");
+	/* how many other pages type in the chat */
+	const [typing, setTyping] = useState(0);
 	const siteLobby = useRef(null);
 
 	useEffect(() => {
 		const joined = joinLobby({ onCount: setOnline, onMessages: setMessages, onNotice: setChatNotice,
-			onState: setChatState });
+			onState: setChatState, onTyping: setTyping });
 		siteLobby.current = joined;
 		/* the chat's name: the player's Halo profile's (profile.js) */
 		const stopName = watchProfileName((name) => joined.setName(name));
@@ -235,7 +237,8 @@ export default function App() {
 		focusGame();
 	}
 
-	const chatProps = { count: online, messages, notice: chatNotice, state: chatState, onSay: say };
+	const chatProps = { count: online, messages, notice: chatNotice, state: chatState, typing, onSay: say,
+		onTyping: () => siteLobby.current?.typing() };
 
 	return (
 		<main className="page">

@@ -19,6 +19,9 @@ const RETRY_MOST = 60_000;
 const HIDDEN_FOR = 5 * 60_000;
 /* the messages a page keeps */
 const KEPT = 200;
+/* how often a page that types says so (ms): the server forgets it after 5
+seconds (Signalling.Typing) */
+const TYPING_EVERY = 3_000;
 
 /* the player colours of a multiplayer game, as the server names them
 (Signalling.Chat), for the chat's names: the game's profile_color_table
@@ -64,11 +67,14 @@ onCount(null) while there is none; onMessages(messages) with the chat's
 messages, oldest first, at each new one; onNotice(text) when the server
 refuses a message; onState(state) as the WebSocket goes: "connecting"
 (the first time), "connected", or "offline" (lost or refused, or a server
-without the lobby: it tries again). Returns { say(text), setName(name),
-stop() }. */
-export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = () => {} }) {
+without the lobby: it tries again); onTyping(count) with how many other
+pages type (0 while there is no server). Returns { say(text), typing(),
+setName(name), stop() }: typing() at each of the player's keys in the
+chat, which tells the server at most every 3 seconds. */
+export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = () => {}, onTyping = () => {} }) {
 	const visitor = visitorId();
 	let socket = null;
+	let typed = -Infinity;
 	let ping = 0;
 	let retry = 0;
 	let hidden = 0;
@@ -116,6 +122,11 @@ export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = 
 		case "chat":
 			add([data]);
 			break;
+		case "typing":
+			if (Number.isInteger(data.count)) {
+				onTyping(data.count);
+			}
+			break;
 		case "error":
 			onNotice(data.message);
 			break;
@@ -151,7 +162,9 @@ export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = 
 		socket.addEventListener("close", () => {
 			clearInterval(ping);
 			socket = null;
+			typed = -Infinity;
 			onCount(null);
+			onTyping(0);
 			onState("offline");
 			if (!stopped && !document.hidden) {
 				/* (each page at its own moment: half the wait, and a random
@@ -182,7 +195,17 @@ export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = 
 
 	return {
 		/* false if the lobby is not reached */
-		say: (text) => send({ type: "chat", text }),
+		say(text) {
+			/* (the message ends the typing, there: the next key says it again) */
+			typed = -Infinity;
+			return send({ type: "chat", text });
+		},
+		typing() {
+			const now = performance.now();
+			if (now - typed >= TYPING_EVERY && send({ type: "typing" })) {
+				typed = now;
+			}
+		},
 		setName(next) {
 			name = next;
 			send({ type: "name", name });
