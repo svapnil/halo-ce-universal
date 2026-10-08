@@ -37,5 +37,9 @@ node_modules/
 .wrangler/
 .dev.vars*
 
+# The relay's binary, from `go build` in port/web/relay (the Dockerfile
+# builds its own)
+port/web/relay/halo-web-relay
+
 # Notes for agents (local only)
 AGENTS.md
