@@ -126,6 +126,11 @@ void posix_random_bytes(void *buffer, posix_ulong size);
 /* the IPv4 address (network byte order) of host, a name or a dotted quad,
 or 0 if it cannot be resolved; may block while a name is looked up */
 posix_ulong posix_resolve_ipv4(const char *host);
+/* a peer's tunnel answered a ping (p2p.c) from address and port (network
+byte order), milliseconds after it was sent: the browser build tells its
+relay, which counts how far peers are from it (web_net.c); elsewhere
+nothing */
+void posix_note_round_trip(posix_ulong address, unsigned short port, posix_ulong milliseconds);
 
 /* ---------- UPnP (internet play, p2p.c; posix_upnp.c, with
 port/third_party/miniupnpc) */

@@ -439,6 +439,9 @@ enum
 	_relay_out_close,
 	/* a lookup's number, the name */
 	_relay_out_resolve,
+	/* address, port, milliseconds: a peer's tunnel answered a ping
+	(posix_note_round_trip) */
+	_relay_out_round_trip,
 };
 
 /* records from the relay */
@@ -1794,6 +1797,24 @@ posix_ulong posix_resolve_ipv4(const char *host)
 		address = relay.lookups[index].address;
 	pthread_mutex_unlock(&net_lock);
 	return (posix_ulong)swap32(address);
+}
+
+/* a peer's round trip, through the relay: the relay takes away its own to
+this page, and counts what is left, its own to the peer (relay/main.go) */
+void posix_note_round_trip(posix_ulong address, unsigned short port, posix_ulong milliseconds)
+{
+	unsigned int ip = swap32((unsigned int)address);
+	unsigned char header[10];
+
+	pthread_mutex_lock(&net_lock);
+	if (relay_reaches(ip))
+	{
+		put32(header, ip);
+		put16(header + 4, swap16(port));
+		put32(header + 6, (unsigned int)milliseconds);
+		relay_record(_relay_out_round_trip, header, sizeof(header), NULL, 0);
+	}
+	pthread_mutex_unlock(&net_lock);
 }
 
 /* ---------- UPnP: behind the relay, there is no router to ask */

@@ -19,7 +19,7 @@ numbers are big-endian. A handle is the game's, for one socket of a page.
 	3 data      handle, bytes                3 refused   handle
 	4 close     handle                       4 data      handle, bytes
 	5 resolve   number, name                 5 closed    handle
-	                                         6 resolved  number, address (0: none)
+	6 round trip address, port, milliseconds 6 resolved  number, address (0: none)
 	0x7f ping (echoed)                       0x7f ping   number
 
 What it lets a page do is only what native games need, so that it serves
@@ -36,6 +36,12 @@ nothing else (NETWORK.md, "The relay's limits"):
     TURN's permissions: a peer behind a NAT answers from its own);
   - and caps: each session's packets and bytes a second (each way), sockets and
     destinations, sessions from an address, and sessions in all.
+
+How far players are (RELAY_METRICS): the relay pings each page, and the
+page's game pings the peers its tunnel reaches (a peer answers at once) and
+tells the relay each round trip (6, round trip). Taking the page's away
+leaves the relay's own to the peer: with the region of Fly's edge that the
+page came in through, how much a relay nearer the page would save it.
 
 Settings (the environment):
 
@@ -64,6 +70,9 @@ Settings (the environment):
 	                      (port/web/signalling, on this machine): /net/rooms/
 	                      and /net/online go there, so that the two share an
 	                      address
+	RELAY_METRICS         the port of /metrics, the round trips for Prometheus
+	                      (on Fly.io, fly.toml's [metrics]; not the public
+	                      port's); none if empty
 */
 package main
 
@@ -112,6 +121,7 @@ var (
 	publicIP     = addressNumber(net.ParseIP(setting("RELAY_PUBLIC_IP", "")))
 	report       = setting("RELAY_REPORT", "") == "1"
 	signalling   = setting("RELAY_SIGNALLING", "")
+	metricsPort  = setting("RELAY_METRICS", "")
 	// (as port/assets/network/brokers.txt, and port/linux/src/port_config.c's
 	// default for network.stun_servers)
 	brokers     = endpoints(setting("RELAY_BROKERS", "opence.milenko.org:1883,broker.emqx.io:1883,broker.hivemq.com:1883,test.mosquitto.org:1883"))
@@ -146,6 +156,15 @@ const (
 	// when it reconnects to them
 	lookupsPerMinute = 30
 	lookupsAtOnce    = 10
+	// a peer's round trips the page tells (a tunnel pings each of a peer's
+	// addresses 5 times a second while it connects, and an idle peer once a
+	// second), and the longest believed
+	roundTripsPerSecond = 20
+	longestRoundTrip    = 10 * time.Second
+	// the page's round trips the relay's own to a peer is taken from: the
+	// least of the last few, as near as the page's link allows to the time
+	// on the wire alone
+	pageTripsKept = 10
 
 	// a token is used at most once in its life
 	tokenLife = 60
@@ -178,11 +197,12 @@ const (
 
 // the records
 const (
-	inDatagram = 1
-	inConnect  = 2
-	inData     = 3
-	inClose    = 4
-	inResolve  = 5
+	inDatagram  = 1
+	inConnect   = 2
+	inData      = 3
+	inClose     = 4
+	inResolve   = 5
+	inRoundTrip = 6
 
 	outDatagram  = 1
 	outConnected = 2
@@ -500,18 +520,26 @@ type session struct {
 	pings      map[uint32]time.Time
 	nextPing   uint32
 	roundTrips []time.Duration
-	counts     counts
-	tunnels    map[string]*tunnelCount
+	// the region of Fly's edge the page came in through (a metrics label)
+	edge string
+	// the page's last round trips, and the relay's own to its peers since
+	// the last report (and the game's, through the relay)
+	pageTrips   []time.Duration
+	peerTrips   []time.Duration
+	gameTrips   []time.Duration
+	peerReports *bucket
+	counts      counts
+	tunnels     map[string]*tunnelCount
 }
 
-func newSession(conn *websocket.Conn, from string) *session {
+func newSession(conn *websocket.Conn, from, edge string) *session {
 	ctx, cancel := context.WithCancel(context.Background())
 	sessionsLock.Lock()
 	nextSession++
 	id := nextSession
 	sessionsLock.Unlock()
 	return &session{
-		id: id, from: from, conn: conn, ctx: ctx, cancel: cancel,
+		id: id, from: from, edge: edge, conn: conn, ctx: ctx, cancel: cancel,
 		queue:        make(chan []byte, maximumQueued),
 		udpSockets:   map[uint32]*udpSocket{},
 		tcpSockets:   map[uint32]net.Conn{},
@@ -523,6 +551,7 @@ func newSession(conn *websocket.Conn, from string) *session {
 		bytesIn:      newBucket(bytesInPerSecond, bytesInPerSecond),
 		tcpBytes:     newBucket(tcpBytesPerSecond, tcpBytesPerSecond),
 		lookups:      newBucket(lookupsPerMinute/60.0, lookupsAtOnce),
+		peerReports:  newBucket(roundTripsPerSecond, roundTripsPerSecond),
 		pings:        map[uint32]time.Time{},
 		counts:       counts{refused: map[string]int{}},
 		tunnels:      map[string]*tunnelCount{},
@@ -622,7 +651,12 @@ func (s *session) receive(data []byte) {
 		s.lock.Lock()
 		if sent, ok := s.pings[handle]; ok {
 			delete(s.pings, handle)
-			s.roundTrips = append(s.roundTrips, time.Since(sent))
+			trip := time.Since(sent)
+			s.roundTrips = append(s.roundTrips, trip)
+			if s.pageTrips = append(s.pageTrips, trip); len(s.pageTrips) > pageTripsKept {
+				s.pageTrips = s.pageTrips[1:]
+			}
+			pageRoundTrips.observe(s.edge, trip)
 		}
 		s.lock.Unlock()
 	case inDatagram:
@@ -641,7 +675,32 @@ func (s *session) receive(data []byte) {
 		s.lock.Unlock()
 	case inResolve:
 		go s.resolve(handle, string(body[4:]))
+	case inRoundTrip:
+		if len(body) >= 10 {
+			s.peerRoundTrip(handle, time.Duration(binary.BigEndian.Uint32(body[6:]))*time.Millisecond)
+		}
 	}
+}
+
+// the game's round trip to a peer, through the relay: what is left after
+// the page's is the relay's own to the peer
+func (s *session) peerRoundTrip(address uint32, game time.Duration) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	// (only a peer the page sent to; and the page says it, so a few a
+	// second, of believable lengths)
+	if !s.permitted[address] || game > longestRoundTrip || len(s.pageTrips) == 0 || !s.peerReports.take(1) {
+		return
+	}
+	page := s.pageTrips[0]
+	for _, trip := range s.pageTrips[1:] {
+		page = min(page, trip)
+	}
+	peer := max(0, game-page)
+	s.gameTrips = append(s.gameTrips, game)
+	s.peerTrips = append(s.peerTrips, peer)
+	gameRoundTrips.observe(s.edge, game)
+	peerRoundTrips.observe(s.edge, peer)
 }
 
 // ---- UDP
@@ -965,6 +1024,8 @@ func (s *session) report() {
 	s.lock.Lock()
 	trips := s.roundTrips
 	s.roundTrips = nil
+	peerTrips, gameTrips := s.peerTrips, s.gameTrips
+	s.peerTrips, s.gameTrips = nil, nil
 	c := s.counts
 	s.counts = counts{refused: map[string]int{}}
 	var parts []string
@@ -980,15 +1041,13 @@ func (s *session) report() {
 		parts = append(parts, fmt.Sprintf("%d dropped to the page", c.droppedToPage))
 	}
 	if report {
-		if len(trips) > 0 {
-			sort.Slice(trips, func(a, b int) bool { return trips[a] < trips[b] })
-			var sum time.Duration
-			for _, trip := range trips {
-				sum += trip
+		for _, kind := range []struct {
+			name  string
+			trips []time.Duration
+		}{{"page", trips}, {"peer", peerTrips}, {"game to peer", gameTrips}} {
+			if summary := tripSummary(kind.trips); summary != "" {
+				parts = append(parts, kind.name+" round trip "+summary)
 			}
-			ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
-			parts = append(parts, fmt.Sprintf("page round trip %.1f ms (min %.1f, max %.1f)",
-				ms(sum/time.Duration(len(trips))), ms(trips[0]), ms(trips[len(trips)-1])))
 		}
 		seconds := reportInterval.Seconds()
 		parts = append(parts, fmt.Sprintf("to peers %.0f/s %.1f KiB/s", float64(c.datagramsOut)/seconds,
@@ -1014,6 +1073,21 @@ func (s *session) report() {
 	}
 }
 
+// "<average> ms (min <least>, max <most>)", or "" for none
+func tripSummary(trips []time.Duration) string {
+	if len(trips) == 0 {
+		return ""
+	}
+	sort.Slice(trips, func(a, b int) bool { return trips[a] < trips[b] })
+	var sum time.Duration
+	for _, trip := range trips {
+		sum += trip
+	}
+	ms := func(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+	return fmt.Sprintf("%.1f ms (min %.1f, max %.1f)", ms(sum/time.Duration(len(trips))), ms(trips[0]),
+		ms(trips[len(trips)-1]))
+}
+
 func (s *session) close() {
 	s.cancel()
 	s.report()
@@ -1033,6 +1107,101 @@ func (s *session) close() {
 	}
 	sessionsLock.Unlock()
 	s.log("disconnected")
+}
+
+// ---------- metrics (RELAY_METRICS: Prometheus's text format, which Fly.io
+// scrapes every 15 seconds; Fly's own labels, region among them, are the
+// machine's, so the pages' is "edge")
+
+// round trips' buckets, in seconds: the edges' distances to one region
+var tripBuckets = []float64{0.005, 0.01, 0.02, 0.03, 0.05, 0.075, 0.1, 0.15, 0.2, 0.3, 0.5, 1}
+
+type tripCounts struct {
+	buckets []uint64
+	count   uint64
+	sum     float64
+}
+
+type histogram struct {
+	name, help string
+	lock       sync.Mutex
+	// by edge
+	series map[string]*tripCounts
+}
+
+func newHistogram(name, help string) *histogram {
+	return &histogram{name: name, help: help, series: map[string]*tripCounts{}}
+}
+
+var (
+	pageRoundTrips = newHistogram("relay_page_round_trip_seconds",
+		"Round trips from the relay to a page and back (the relay's pings), by the page's Fly edge.")
+	peerRoundTrips = newHistogram("relay_peer_round_trip_seconds",
+		"Round trips from the relay to a page's peer (its host) and back: the game's to the peer less the page's least of late, by the page's Fly edge.")
+	gameRoundTrips = newHistogram("relay_game_round_trip_seconds",
+		"Round trips from a page's game to its peer and back through the relay (the tunnel's pings, as the page tells them), by the page's Fly edge.")
+	histograms = []*histogram{pageRoundTrips, peerRoundTrips, gameRoundTrips}
+)
+
+func (h *histogram) observe(edge string, trip time.Duration) {
+	seconds := trip.Seconds()
+	h.lock.Lock()
+	defer h.lock.Unlock()
+	counts := h.series[edge]
+	if counts == nil {
+		counts = &tripCounts{buckets: make([]uint64, len(tripBuckets))}
+		h.series[edge] = counts
+	}
+	for index, bound := range tripBuckets {
+		if seconds <= bound {
+			counts.buckets[index]++
+		}
+	}
+	counts.count++
+	counts.sum += seconds
+}
+
+func (h *histogram) write(out *strings.Builder) {
+	h.lock.Lock()
+	defer h.lock.Unlock()
+	fmt.Fprintf(out, "# HELP %s %s\n# TYPE %s histogram\n", h.name, h.help, h.name)
+	edges := make([]string, 0, len(h.series))
+	for edge := range h.series {
+		edges = append(edges, edge)
+	}
+	sort.Strings(edges)
+	for _, edge := range edges {
+		counts := h.series[edge]
+		for index, bound := range tripBuckets {
+			fmt.Fprintf(out, "%s_bucket{edge=%q,le=\"%g\"} %d\n", h.name, edge, bound, counts.buckets[index])
+		}
+		fmt.Fprintf(out, "%s_bucket{edge=%q,le=\"+Inf\"} %d\n", h.name, edge, counts.count)
+		fmt.Fprintf(out, "%s_sum{edge=%q} %g\n%s_count{edge=%q} %d\n", h.name, edge, counts.sum, h.name, edge, counts.count)
+	}
+}
+
+func serveMetrics(response http.ResponseWriter, request *http.Request) {
+	var out strings.Builder
+	for _, h := range histograms {
+		h.write(&out)
+	}
+	response.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	fmt.Fprint(response, out.String())
+}
+
+var regionPattern = regexp.MustCompile(`^[a-z]{3}$`)
+
+// the region of Fly's edge the page came in through (Fly-Region): "local"
+// without one (not on Fly.io)
+func edgeRegion(request *http.Request) string {
+	region := request.Header.Get("Fly-Region")
+	switch {
+	case region == "":
+		return "local"
+	case regionPattern.MatchString(region):
+		return region
+	}
+	return "other"
 }
 
 // ---------- the server
@@ -1100,7 +1269,7 @@ func serveRelay(response http.ResponseWriter, request *http.Request) {
 		sessionsLock.Unlock()
 		return
 	}
-	newSession(conn, from).run()
+	newSession(conn, from, edgeRegion(request)).run()
 }
 
 func main() {
@@ -1128,6 +1297,13 @@ func main() {
 		proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: signalling})
 		mux.Handle("/net/rooms/", proxy)
 		mux.Handle("/net/online", proxy)
+	}
+	if metricsPort != "" {
+		metrics := http.NewServeMux()
+		metrics.HandleFunc("GET /metrics", serveMetrics)
+		go func() {
+			log.Fatal("relay: metrics: ", http.ListenAndServe(":"+metricsPort, metrics))
+		}()
 	}
 
 	note := ""

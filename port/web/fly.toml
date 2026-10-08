@@ -50,9 +50,20 @@ primary_region = "iad"
   RELAY_SIGNALLING = "127.0.0.1:8791"
   SIGNALLING_PORT = "8791"
   SIGNALLING_ORIGINS = "https://openhaloce.com,https://www.openhaloce.com"
+  # the round trips for Fly's Prometheus ([metrics] below): the relay's to
+  # pages and to their peers, by the edge each page came in through
+  RELAY_METRICS = "9091"
 
 [deploy]
   strategy = "immediate"
+
+# the relay's /metrics (RELAY_METRICS), which Fly scrapes every 15 seconds,
+# privately: the relay_*_round_trip_seconds histograms, by the label "edge"
+# (Fly's own "region" is the machine's). With Fly's Prometheus API
+# (NETWORK.md, "How far players are")
+[metrics]
+  port = 9091
+  path = "/metrics"
 
 # the pages' WebSockets (TLS at Fly's edge), the relay's and the
 # signalling's, and /healthz. As many as the two take: the relay's 400

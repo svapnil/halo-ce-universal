@@ -558,6 +558,13 @@ posix_ulong posix_resolve_ipv4(const char *host)
 	return address;
 }
 
+void posix_note_round_trip(posix_ulong address, unsigned short port, posix_ulong milliseconds)
+{
+	(void)address;
+	(void)port;
+	(void)milliseconds;
+}
+
 /* ---------- the process and the desktop */
 
 int posix_command_line_argument(int index, char *buffer, posix_ulong size)
