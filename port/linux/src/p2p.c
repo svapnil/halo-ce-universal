@@ -2218,6 +2218,7 @@ static void tunnel_received(const unsigned char *packet, int size, const struct 
 
 			memcpy(&sent, inner + 1, 4);
 			peer->round_trip = (unsigned int)p2p_now() - sent;
+			posix_note_round_trip(from->sin_addr.s_addr, from->sin_port, (posix_ulong)peer->round_trip);
 		}
 		break;
 	case _packet_datagram:

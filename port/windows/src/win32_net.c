@@ -388,3 +388,10 @@ posix_ulong posix_resolve_ipv4(const char *host)
 	freeaddrinfo(results);
 	return address;
 }
+
+void posix_note_round_trip(posix_ulong address, unsigned short port, posix_ulong milliseconds)
+{
+	(void)address;
+	(void)port;
+	(void)milliseconds;
+}

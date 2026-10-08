@@ -547,7 +547,7 @@ them. What a browser lacks, real sockets, a relay lends it:
   | 3 data: handle, bytes | 3 refused: handle |
   | 4 close: handle | 4 data: handle, bytes |
   | 5 resolve: number, name | 5 closed: handle |
-  | | 6 resolved: number, address (0: none) |
+  | 6 round trip: address, port, milliseconds | 6 resolved: number, address (0: none) |
   | 0x7f ping, echoed by the page | 0x7f ping: number |
 
   With `RELAY_REPORT=1` it logs each page's round trip to it, the traffic
@@ -623,6 +623,39 @@ At worst, then, a token buys a few hundred small datagrams, shaped like the
 desktop's, to an address that does not answer: nothing amplified, and
 nothing to a private network. `relay/test/limits.test.mjs` tests each of
 these.
+
+### How far players are
+
+Every packet of a native game goes through the relay, so a player's ping to
+the host is two legs: the page's to the relay, and the relay's to the host.
+The relay measures both (`relay/main.go`, `RELAY_METRICS`; added 2026-10-08,
+to decide where more relays would help):
+
+- **The page's**: the relay pings each page every second (0x7f).
+- **The host's**: the tunnel pings a peer's addresses as it connects, and a
+  quiet peer every second, and the peer answers at once (`p2p.c`,
+  `_packet_ping`). In the browser build the game tells the relay each
+  answer's round trip (6, round trip: `web_net.c`'s
+  `posix_note_round_trip`; elsewhere it does nothing). The relay believes
+  it only for an address the page sent to, 20 a second at most, and takes
+  away the least of the page's last 10 round trips: what is left is its own
+  to the host.
+
+It exports them, on `RELAY_METRICS`' port (9091 on Fly.io, which scrapes it
+privately: `fly.toml`'s `[metrics]`), as three histograms by the region of
+Fly's edge the page came in through (`Fly-Region`, the label `edge`; Fly's
+own `region` is the machine's): `relay_page_round_trip_seconds`,
+`relay_peer_round_trip_seconds`, and `relay_game_round_trip_seconds`, the
+two together as the game measures them. `RELAY_REPORT=1` logs them for each
+page too. The median round trip from the relay to the hosts of pages that
+came in through European edges, for example:
+
+    histogram_quantile(0.5, sum by (le, edge)(increase(
+      relay_peer_round_trip_seconds_bucket{app="halo-web-relay", edge=~"lhr|ams|fra|cdg|arn"}[3d])))
+
+What another relay would save: a host of a European page that is 80 ms or so
+from iad is in Europe, and a relay there would take most of both legs away;
+one 5 ms from iad is near it, and would gain nothing.
 
 ### Trying it
 

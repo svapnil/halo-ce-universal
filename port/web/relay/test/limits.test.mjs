@@ -27,6 +27,8 @@ const STUN_PORT = 34780;
 const PUBLIC_IP = "203.0.113.7";
 /* where the relay is told the signalling is (RELAY_SIGNALLING) */
 const SIGNALLING_PORT = 8798;
+/* its round trips for Prometheus (RELAY_METRICS) */
+const METRICS_PORT = 8797;
 const SECRET = "a secret for the tests";
 const ORIGIN = "http://localhost:8765";
 const OUT = { datagram: 1, connected: 2, refused: 3, data: 4, closed: 5, resolved: 6 };
@@ -42,7 +44,7 @@ before(async () => {
 			...process.env, PORT: String(PORT), RELAY_TOKEN_SECRET: SECRET, RELAY_ORIGINS: ORIGIN,
 			RELAY_ALLOW_PRIVATE: "1", RELAY_UDP_PORTS: `${UDP_PORT}-${UDP_PORT + 1}`,
 			RELAY_STUN: `stun.l.google.com:19302,localhost:${STUN_PORT}`, RELAY_PUBLIC_IP: PUBLIC_IP,
-			RELAY_SIGNALLING: `127.0.0.1:${SIGNALLING_PORT}`,
+			RELAY_SIGNALLING: `127.0.0.1:${SIGNALLING_PORT}`, RELAY_METRICS: String(METRICS_PORT),
 		},
 	});
 	relay.stdout.on("data", (data) => { output += data; });
@@ -80,21 +82,24 @@ const LAN_ADDRESS = Object.values(networkInterfaces()).flat()
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /* a page: its WebSocket, and the messages it got */
-function page({ token, origin = ORIGIN } = {}) {
+function page({ token, origin = ORIGIN, edge } = {}) {
 	return new Promise((resolve) => {
 		const url = `ws://127.0.0.1:${PORT}/${token === undefined ? "" : `?token=${encodeURIComponent(token)}`}`;
-		const socket = new WebSocket(url, { origin });
+		/* (on Fly.io, its edge's region: Fly-Region) */
+		const socket = new WebSocket(url, { origin, headers: edge ? { "Fly-Region": edge } : {} });
 		opened.push(socket);
 		const messages = [];
+		const page = { socket, messages, opened: true, pings: 0 };
 		socket.on("message", (data) => {
 			const bytes = Buffer.from(data);
 			if (bytes[0] === 0x7f) {
 				socket.send(bytes);
+				page.pings++;
 			} else {
 				messages.push(bytes);
 			}
 		});
-		socket.on("open", () => resolve({ socket, messages, opened: true }));
+		socket.on("open", () => resolve(page));
 		socket.on("unexpected-response", (request, response) => resolve({ opened: false, status: response.statusCode }));
 		socket.on("error", () => resolve({ opened: false }));
 	});
@@ -319,4 +324,39 @@ test("the rooms' WebSockets go to the signalling, as they are", async () => {
 
 	/* and nothing else does */
 	assert.equal((await fetch(`http://127.0.0.1:${PORT}/net/relay`)).status, 404);
+});
+
+/* a histogram's count and sum for an edge, from the relay's /metrics */
+async function metric(name, edge) {
+	const text = await (await fetch(`http://127.0.0.1:${METRICS_PORT}/metrics`)).text();
+	const value = (suffix) => Number(text.match(new RegExp(`^${name}_${suffix}\\{edge="${edge}"\\} (\\S+)$`, "m"))?.[1] ?? 0);
+	return { count: value("count"), sum: value("sum") };
+}
+
+test("a peer's round trip, as the page tells it, is counted less the page's own", async () => {
+	const peer = await udpSocket();
+	const page_ = await page({ token: await makeRelayToken(SECRET), edge: "lhr" });
+	/* (the relay's first ping, a second in: the page's round trip) */
+	assert.ok(await until(() => page_.pings > 0, 3000));
+	const before = await metric("relay_peer_round_trip_seconds", "lhr");
+	const game = await metric("relay_game_round_trip_seconds", "lhr");
+	/* a peer the page never sent to is not believed */
+	send(page_.socket, 6, u32(0x0a000009), u16(5000), u32(80));
+	/* one it did is */
+	send(page_.socket, 1, u32(7), u32(LOCALHOST), u16(peer.address().port), tunnelPacket(1));
+	await sleep(100);
+	send(page_.socket, 6, u32(LOCALHOST), u16(peer.address().port), u32(80));
+	await sleep(200);
+	const after = await metric("relay_peer_round_trip_seconds", "lhr");
+	assert.equal(after.count, before.count + 1);
+	assert.equal((await metric("relay_game_round_trip_seconds", "lhr")).count, game.count + 1);
+	/* (80 ms, less this machine's round trip to the page: a few at most) */
+	const peerTrip = after.sum - before.sum;
+	assert.ok(peerTrip > 0.06 && peerTrip <= 0.08, `peer round trip ${peerTrip}`);
+	/* (the page's own, counted by its edge too) */
+	assert.ok((await metric("relay_page_round_trip_seconds", "lhr")).count >= 1);
+});
+
+test("the metrics are not on the public port", async () => {
+	assert.equal((await fetch(`http://127.0.0.1:${PORT}/metrics`)).status, 404);
 });

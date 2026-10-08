@@ -73,6 +73,8 @@ WEB_NET_FUNCTIONS = [
     "posix_socket_getpeername", "posix_socket_select", "posix_local_ipv4_address",
     # (a name's address comes from the relay: web_net.c)
     "posix_resolve_ipv4",
+    # (a peer's round trip goes to the relay, which counts it: web_net.c)
+    "posix_note_round_trip",
 ]
 # Native games (NETWORK.md, "Native games"): the desktop's internet play
 # runs here too, its sockets to the internet through the relay (web_net.c).
