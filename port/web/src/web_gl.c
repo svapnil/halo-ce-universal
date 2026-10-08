@@ -31,12 +31,12 @@ int host_gl_has_extension(const char *name)
 }
 
 /* the visibility test counters are atomic counters, which WebGL 2 does not
-have (d3d8_gl.c checks before it reads one) */
-uint32_t host_gl_read_buffer_word(uint32_t buffer, uint32_t offset)
+have (d3d8_gl.c checks before it reads their snapshots) */
+void host_gl_read_buffer(uint32_t buffer, uint32_t offset, uint32_t size, void *data)
 {
 	(void)buffer;
 	(void)offset;
-	return 0;
+	memset(data, 0, size);
 }
 
 /* WebGL copies the data of bufferSubData when it is called, so no queued

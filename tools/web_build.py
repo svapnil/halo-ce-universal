@@ -105,7 +105,10 @@ WEB_PLATFORM_RENAMES: Dict[str, List[str]] = {
     "updater.c": ["exit=web_exit"],
 }
 NATIVE_INTERNET_PLAY_UNITS = {"p2p.c", "p2p_signal.c", "p2p_crypto.c", "p2p_discord.c", "p2p_lobby.c"}
-DESKTOP_INTERNET_PLAY_UNITS = {"posix_upnp.c"}
+# the desktop's alone: UPnP's port mapping, and the open() that keeps the GPU
+# driver from the kernel's trace_marker (a page has neither, and its open()
+# is WasmFS's)
+DESKTOP_UNITS = {"posix_upnp.c", "posix_trace_marker.c"}
 # the browser's units with the host ABI, as posix_*.c (they implement posix.h),
 # and those with the game's (they call it, as port/linux/game's do)
 WEB_POSIX_UNITS = {"web_net.c", "web_crash.c"}
@@ -208,7 +211,12 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         sdk_flags,
     ])
     for source in game_sources(config):
-        add_object(source, f"{game_cflags} {renames(source)}")
+        flags = f"{game_cflags} {renames(source)}"
+        # the halt screen's and the version command's build label, as
+        # tools/linux_build.py gives main.c
+        if source.as_posix() == "source/main/main.c":
+            flags += " " + updater_defines(release)
+        add_object(source, flags)
     for source in sorted(Path(config["game_sources"]).glob("*.c")):
         add_object(source, game_cflags)
 
@@ -238,7 +246,7 @@ def generate_web_build(n: Writer, sln: Any) -> None:
         return " ".join(f"-D{name}={prefix}_{name[len('p2p_'):]}" for name in P2P_FUNCTIONS)
 
     for source in sorted(platform_dir.glob("*.c")):
-        if source.name in DESKTOP_INTERNET_PLAY_UNITS:
+        if source.name in DESKTOP_UNITS:
             continue
         if source.name in NATIVE_INTERNET_PLAY_UNITS:
             add_object(source, f"{platform_cflags} {p2p_renames('p2p_native')}")

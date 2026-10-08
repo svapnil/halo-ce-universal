@@ -26,6 +26,9 @@ static int gl_function_optional(const char *name)
 		"glCopyImageSubData", "glDrawElementsBaseVertex",
 		"glVertexAttribFormat", "glVertexAttribIFormat", "glVertexAttribBinding", "glBindVertexBuffer",
 		"glGetQueryBufferObjectuiv",
+		/* (ES 3.1's: d3d8_gl.c calls it with atomic counters only, which
+		WebGL 2 has not) */
+		"glMemoryBarrier",
 	};
 	unsigned long index;
 

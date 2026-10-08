@@ -21,7 +21,7 @@ if [ "$1" = stop ]; then
 	docker network rm halonet >/dev/null 2>&1 || true
 	exit 0
 fi
-tag=${1:-build-129}
+tag=${1:-build-154}
 map=${2:-bloodgulch}
 
 mkdir -p "$work/release" "$work/saves"

@@ -641,35 +641,26 @@ VOID WINAPI Sleep(DWORD milliseconds)
 
 /* ---------- time */
 
-#ifdef __EMSCRIPTEN__
-/* The browser's monotonic clock is the time since 1970 (every thread's
-performance.now() from the same origin), which a DWORD wraps at some
-arbitrary point. The game keeps milliseconds in longs and floats (sound
-timing, for one) that need small values, as the Xbox's count from boot is:
-count from the start of the game instead. */
-static unsigned long long tick_count_origin;
-
-__attribute__((constructor))
-static void tick_count_origin_initialize(void)
+/* The game's clocks count from when it started, as the Xbox's count from
+power-on. Its code keeps times in signed 32-bit variables, which a host up
+for more than 24.8 days (2^31 ms since boot) overflows: a hosted game then
+timed out its own clients. They start at 10 s, about where an Xbox's clock
+is by the time the game runs. */
+static unsigned long long platform_clock_nanoseconds(void)
 {
+	static unsigned long long start;
 	struct timespec now;
+	unsigned long long value, expected = 0;
 
 	clock_gettime(CLOCK_MONOTONIC, &now);
-	tick_count_origin = (unsigned long long)now.tv_sec * 1000ULL + (unsigned long long)now.tv_nsec / 1000000ULL;
+	value = (unsigned long long)now.tv_sec * 1000000000ULL + (unsigned long long)now.tv_nsec;
+	__atomic_compare_exchange_n(&start, &expected, value - 10000000000ULL, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED);
+	return value - __atomic_load_n(&start, __ATOMIC_RELAXED);
 }
-#endif
 
 DWORD WINAPI GetTickCount(void)
 {
-	struct timespec now;
-	unsigned long long milliseconds;
-
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	milliseconds = (unsigned long long)now.tv_sec * 1000ULL + (unsigned long long)now.tv_nsec / 1000000ULL;
-#ifdef __EMSCRIPTEN__
-	milliseconds -= tick_count_origin;
-#endif
-	return (DWORD)milliseconds;
+	return (DWORD)(platform_clock_nanoseconds() / 1000000ULL);
 }
 
 /* The Xbox performance counter runs at the 733 MHz CPU clock. Report a
@@ -679,11 +670,7 @@ arithmetic in the game stays in range, fine enough for frame timing. */
 
 BOOL WINAPI QueryPerformanceCounter(LARGE_INTEGER *count)
 {
-	struct timespec now;
-
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	count->QuadPart = (LONGLONG)((unsigned long long)now.tv_sec * PLATFORM_PERFORMANCE_FREQUENCY +
-		(unsigned long long)now.tv_nsec / (1000000000ULL / PLATFORM_PERFORMANCE_FREQUENCY));
+	count->QuadPart = (LONGLONG)(platform_clock_nanoseconds() / (1000000000ULL / PLATFORM_PERFORMANCE_FREQUENCY));
 	return TRUE;
 }
 
