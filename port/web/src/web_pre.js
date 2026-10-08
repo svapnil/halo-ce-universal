@@ -26,7 +26,8 @@ if (typeof importScripts == "function") {
 	getGamepads), but SDL's gamepad code asks it from the game's thread when a
 	gamepad is opened (its rumble: EM_ASM in SDL_emscriptenjoystick.c), which
 	ended the game of anyone with a gamepad plugged in. None here, then; the
-	gamepads themselves are read through the page's thread. */
+	gamepads themselves are read through the page's thread, as are their ids
+	when one is connected (src/web_gamepad.c). */
 	if (typeof navigator != "undefined" && typeof navigator.getGamepads != "function") {
 		navigator.getGamepads = () => [];
 	}
