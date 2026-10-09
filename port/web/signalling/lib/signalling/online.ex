@@ -14,6 +14,11 @@
 #                    Signalling.Chat)
 #                    {"type": "card", "room", "card"}  a game card's room
 #                                                     as it is now
+#                    {"type": "games", "games": [...]}  the browsers' games,
+#                                                     for the Server Browser
+#                                                     (Signalling.Games):
+#                                                     when it connects, and
+#                                                     as they change
 #                    {"type": "error", "code": "busy", "message"}  too many
 #                                                     messages: not sent
 #   page to server   {"type": "name", "name": "..."}  its player's name
@@ -28,7 +33,7 @@ defmodule Signalling.Online do
   @moduledoc false
   @behaviour WebSock
 
-  alias Signalling.{Chat, Limits, OnlineCount, Presence, Room, Typing}
+  alias Signalling.{Chat, Games, Limits, OnlineCount, Presence, Room, Typing}
 
   @impl true
   def init(page) do
@@ -38,13 +43,17 @@ defmodule Signalling.Online do
         :ok = Phoenix.PubSub.subscribe(Signalling.PubSub, OnlineCount.topic())
         :ok = Phoenix.PubSub.subscribe(Signalling.PubSub, Chat.topic())
         :ok = Phoenix.PubSub.subscribe(Signalling.PubSub, Typing.topic())
+        :ok = Phoenix.PubSub.subscribe(Signalling.PubSub, Games.topic())
         typing = Typing.count(Typing.current(), self())
 
         page =
           Map.merge(page, %{name: Chat.name(nil), color: Chat.color(page.visitor), typing: typing})
 
         history = %{type: "history", messages: Chat.history()}
-        {:push, [count(OnlineCount.current()), text(history), typing(typing)], page}
+
+        {:push,
+         [count(OnlineCount.current()), text(history), typing(typing), games(Games.current())],
+         page}
 
       :busy ->
         # (the page shows no count, and tries again later)
@@ -83,6 +92,8 @@ defmodule Signalling.Online do
   def handle_info({:card, room, card}, page),
     do: {:push, text(%{type: "card", room: room, card: card}), page}
 
+  def handle_info({:games, list}, page), do: {:push, games(list), page}
+
   # (told only when its own count changes: its own typing is not in it)
   def handle_info({:typing, pages}, page) do
     case Typing.count(pages, self()) do
@@ -119,5 +130,6 @@ defmodule Signalling.Online do
 
   defp count(n), do: text(%{type: "online", count: n})
   defp typing(n), do: text(%{type: "typing", count: n})
+  defp games(list), do: text(%{type: "games", games: list})
   defp text(message), do: {:text, JSON.encode!(message)}
 end

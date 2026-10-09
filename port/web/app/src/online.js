@@ -75,8 +75,16 @@ the chat, which tells the server at most every 3 seconds.
 A message that is a game's invite, alone, is a game card (the server's:
 message.card, { room, secret, status, map, players, ... }), whose room the
 server tells again as it changes ("card"): each message of that room is
-then given the card as it is now (NETWORK.md, "Game cards"). */
-export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = () => {}, onTyping = () => {} }) {
+then given the card as it is now (NETWORK.md, "Game cards").
+
+onGames(games) gets the browsers' games as the server has them, as the
+page connects and as they change ("games": [{ room, secret, hostId,
+netVersion, name, map, gametype, engine, players, maximumPlayers, open,
+inProgress, teams, machines }]), for the game's server browser (game.js's
+listGames; NETWORK.md, "Browsers' games in the server browser"); [] while
+there is no server. */
+export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = () => {}, onTyping = () => {},
+	onGames = () => {} }) {
 	const visitor = visitorId();
 	let socket = null;
 	let typed = -Infinity;
@@ -140,6 +148,11 @@ export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = 
 				onTyping(data.count);
 			}
 			break;
+		case "games":
+			if (Array.isArray(data.games)) {
+				onGames(data.games.filter((game) => game && typeof game === "object"));
+			}
+			break;
 		case "error":
 			onNotice(data.message);
 			break;
@@ -178,6 +191,7 @@ export function joinLobby({ onCount, onMessages, onNotice = () => {}, onState = 
 			typed = -Infinity;
 			onCount(null);
 			onTyping(0);
+			onGames([]);
 			onState("offline");
 			if (!stopped && !document.hidden) {
 				/* (each page at its own moment: half the wait, and a random

@@ -35,6 +35,11 @@ const IN_RING = OUT_RING + 16 + RING_SIZE;
 const RING_DATA = 16;
 /* the relay's ping, which the page answers with the same message */
 const PING = 0x7f;
+/* the relay's word that the game's peers send it more than it passes a
+session (relay/main.go's bytesInPerSecond, its body: the page loses packets
+and the game lags): for the page's status bar (App.jsx's "relay-capped"),
+not the game */
+const CAPPED = 7;
 /* records held while the WebSocket opens or the ring to the game is full;
 past this many, the newest are lost */
 const MAXIMUM_HELD = 4096;
@@ -179,6 +184,12 @@ export function startRelayBridge(module, { onStatus = () => {} } = {}) {
 	function toGame(message) {
 		if (message[0] === PING) {
 			socket.send(message);
+			return;
+		}
+		if (message[0] === CAPPED) {
+			const bytesPerSecond = message.length >= 5 ? new DataView(message.buffer, message.byteOffset + 1).getUint32(0) : 0;
+			console.warn(`relay: the peers send more than the relay passes (${bytesPerSecond} bytes a second): packets lost`);
+			onStatus({ state: "capped", bytesPerSecond });
 			return;
 		}
 		if (held.length >= MAXIMUM_HELD) {

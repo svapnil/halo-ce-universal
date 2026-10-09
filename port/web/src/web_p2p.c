@@ -1646,6 +1646,83 @@ EMSCRIPTEN_KEEPALIVE char *web_p2p_room_invite(void)
 	return room_invite;
 }
 
+/* ---------- the browsers' games, for the server browser (NETWORK.md,
+"Browsers' games in the server browser") */
+
+/* The page writes them here as the signalling's server tells it of them
+(app/src/game.js, from Signalling.Games), and p2p_lobby_games lists them,
+named [WEB], above the desktop builds' games (web_p2p_select.c). The page
+raises sequence before it writes (odd: being written) and after (even), and
+a reader that saw it change reads again. */
+enum
+{
+	ROOM_GAMES_MAGIC = 0x47414D53,
+	ROOM_GAMES_VERSION = 1,
+	ROOM_GAMES_MAXIMUM = 64,
+	/* a room's invite, "<code>.<secret>" (web_p2p_join_invite takes it) */
+	ROOM_GAME_INVITE_SIZE = 32,
+};
+
+/* as game.js writes it: ROOM_GAME_SIZE there */
+struct web_room_game
+{
+	char invite[ROOM_GAME_INVITE_SIZE];
+	/* the host's */
+	unsigned char identifier[IDENTIFIER_SIZE];
+	unsigned char engine;
+	/* _game_open, _game_in_progress, _game_teams */
+	unsigned char flags;
+	unsigned char players;
+	unsigned char maximum_players;
+	char name[P2P_LISTING_NAME_SIZE];
+	char map[P2P_LISTING_MAP_SIZE];
+	char gametype[P2P_LISTING_GAMETYPE_SIZE];
+	unsigned char reserved[2];
+};
+
+struct web_room_games
+{
+	unsigned int magic;
+	unsigned int version;
+	unsigned int sequence;
+	unsigned int count;
+	struct web_room_game games[ROOM_GAMES_MAXIMUM];
+};
+
+static struct web_room_games room_games = { ROOM_GAMES_MAGIC, ROOM_GAMES_VERSION };
+
+/* the page's: where it writes the browsers' games */
+EMSCRIPTEN_KEEPALIVE struct web_room_games *web_p2p_room_games(void)
+{
+	return &room_games;
+}
+
+/* a copy of the browsers' games as the page last wrote them, at most
+maximum_count; their count */
+static int room_games_read(struct web_room_game *games, int maximum_count)
+{
+	int attempt;
+
+	for (attempt = 0; attempt < 8; attempt++)
+	{
+		unsigned int before = __atomic_load_n(&room_games.sequence, __ATOMIC_ACQUIRE);
+		unsigned int count;
+
+		if (before & 1)
+			continue;
+		count = __atomic_load_n(&room_games.count, __ATOMIC_ACQUIRE);
+		if (count > ROOM_GAMES_MAXIMUM)
+			count = ROOM_GAMES_MAXIMUM;
+		if ((int)count > maximum_count)
+			count = (unsigned int)maximum_count;
+		memcpy(games, (const void *)room_games.games, count * sizeof(games[0]));
+		__atomic_thread_fence(__ATOMIC_ACQUIRE);
+		if (__atomic_load_n(&room_games.sequence, __ATOMIC_ACQUIRE) == before)
+			return (int)count;
+	}
+	return 0;
+}
+
 int p2p_invite_link(char *link, int size)
 {
 	char invite[sizeof(room_invite)];
@@ -1759,11 +1836,37 @@ void p2p_lobby_refresh(void)
 {
 }
 
+/* the browsers' games, as the page wrote them (room_games), each named
+[WEB]: for the server browser, above the desktop builds' (web_p2p_select.c) */
 int p2p_lobby_games(struct p2p_listing *games, int maximum_count)
 {
-	(void)games;
-	(void)maximum_count;
-	return 0;
+	static struct web_room_game rooms[ROOM_GAMES_MAXIMUM];
+	int count;
+	int index;
+
+	if (maximum_count <= 0)
+		return 0;
+	count = room_games_read(rooms, maximum_count < ROOM_GAMES_MAXIMUM ? maximum_count : ROOM_GAMES_MAXIMUM);
+	for (index = 0; index < count; index++)
+	{
+		const struct web_room_game *room = &rooms[index];
+		struct p2p_listing *listing = &games[index];
+
+		memset(listing, 0, sizeof(*listing));
+		text_copy(listing->invite, sizeof(listing->invite), room->invite);
+		memcpy(listing->identifier, room->identifier, sizeof(listing->identifier));
+		snprintf(listing->name, sizeof(listing->name), "[WEB] %.*s", (int)sizeof(room->name), room->name);
+		snprintf(listing->map, sizeof(listing->map), "%.*s", (int)sizeof(room->map), room->map);
+		snprintf(listing->gametype, sizeof(listing->gametype), "%.*s", (int)sizeof(room->gametype), room->gametype);
+		listing->player_count = room->players;
+		listing->maximum_player_count = room->maximum_players;
+		listing->engine_type = room->engine;
+		listing->open = (room->flags & _game_open) != 0;
+		listing->in_progress = (room->flags & _game_in_progress) != 0;
+		listing->has_teams = (room->flags & _game_teams) != 0;
+		listing->ping = -1;
+	}
+	return count;
 }
 
 void p2p_lobby_mark_failed(const unsigned char *identifier)

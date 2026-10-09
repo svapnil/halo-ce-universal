@@ -182,6 +182,11 @@ screen's shape (the game keeps to 4:3 at the narrowest, and bars the rest) */
 	color: #e5807a;
 }
 
+/* the relay passes less than the host sends (App.jsx's NetStatus) */
+.net-relay-capped .net-text {
+	color: #e5b86a;
+}
+
 .net-button {
 	flex: none;
 	height: 26px;
@@ -407,6 +412,10 @@ the picture, and the game's to click through */
 
 .toast-error .toast-body strong {
 	color: #e5807a;
+}
+
+.toast-warning .toast-body strong {
+	color: #e5b86a;
 }
 
 .toast-close {

@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { CrashPanel, SaveLogButton } from "./CrashPanel.jsx";
-import { browserSupport, joinInvite, startGame } from "./game.js";
+import { browserSupport, joinInvite, listGames, startGame } from "./game.js";
 import { keepFromBrowser } from "./keys.js";
 import { ChatIcon, ChatPane, ChatRail } from "./Chat.jsx";
 import { joinLobby } from "./online.js";
@@ -108,7 +108,7 @@ export default function App() {
 
 	useEffect(() => {
 		const joined = joinLobby({ onCount: setOnline, onMessages: setMessages, onNotice: setChatNotice,
-			onState: setChatState, onTyping: setTyping });
+			onState: setChatState, onTyping: setTyping, onGames: listGames });
 		siteLobby.current = joined;
 		/* the chat's name: the player's Halo profile's (profile.js) */
 		const stopName = watchProfileName((name) => joined.setName(name));
@@ -744,6 +744,12 @@ function OnlineToast({ lobby, net, onClose }) {
 		toast = { key: lobby.message, title: "Could not join the game", text: lobby.message, error: true };
 	} else if (net?.state === "error" && dismissed !== net.error) {
 		toast = { key: net.error, title: "Online play stopped", text: net.error, error: true };
+	} else if (net?.relayCapped && dismissed !== "capped") {
+		/* (a desktop build's game, through the relay, past its cap:
+		relay/main.go's bytesInPerSecond, which the relay tells) */
+		toast = { key: "capped", title: "Cross-platform play may lag", warning: true,
+			text: `Desktop games reach the browser through a relay that passes ${Math.round(net.relayCapped / 1024)} KiB/s. ` +
+				"This host sends more, so some of its updates are lost." };
 	}
 	if (!toast) {
 		return null;
@@ -762,7 +768,7 @@ function OnlineToast({ lobby, net, onClose }) {
 	}
 
 	return (
-		<div className={`toast${toast.error ? " toast-error" : ""}`} role="status"
+		<div className={`toast${toast.error ? " toast-error" : toast.warning ? " toast-warning" : ""}`} role="status"
 			onKeyDown={(event) => event.stopPropagation()} onKeyUp={(event) => event.stopPropagation()}>
 			<div className="toast-body">
 				<strong>{toast.title}</strong>
@@ -786,9 +792,13 @@ function NetStatus({ net }) {
 	const [copied, setCopied] = useState(false);
 
 	/* a room's state (browsers' games), else the relay's (desktop builds'
-	games: relay_bridge.js), once the game has reached it */
+	games: relay_bridge.js), once the game has reached it; a warning while
+	the host sends more than the relay passes (relay/main.go's
+	bytesInPerSecond, which the relay tells): the game loses packets, and
+	lags (NETWORK.md, "The relay's limits") */
 	const state = net && net.state !== "idle" ? net.state :
-		net?.relay ? `relay-${net.relay.startsWith("error") ? "error" : net.relay}` : null;
+		net?.relay ? `relay-${net.relay.startsWith("error") ? "error" :
+			net.relay === "connected" && net.relayCapped ? "capped" : net.relay}` : null;
 	if (!state) {
 		return null;
 	}
@@ -801,6 +811,7 @@ function NetStatus({ net }) {
 		error: `Network: ${net.error}`,
 		"relay-connecting": "Reaching the relay…",
 		"relay-connected": "Relay connected",
+		"relay-capped": `Relay over its limit (${Math.round(net.relayCapped / 1024)} KiB/s): the game may lag`,
 		"relay-disconnected": "Relay lost: reconnecting…",
 		"relay-error": `Relay: ${net.relay?.slice("error: ".length)}`,
 	}[state];

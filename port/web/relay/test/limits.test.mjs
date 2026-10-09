@@ -31,7 +31,7 @@ const SIGNALLING_PORT = 8798;
 const METRICS_PORT = 8797;
 const SECRET = "a secret for the tests";
 const ORIGIN = "http://localhost:8765";
-const OUT = { datagram: 1, connected: 2, refused: 3, data: 4, closed: 5, resolved: 6 };
+const OUT = { datagram: 1, connected: 2, refused: 3, data: 4, closed: 5, resolved: 6, capped: 7 };
 
 let relay;
 let output = "";
@@ -267,6 +267,10 @@ test("a session's UDP from its peers is capped too", async () => {
 	const count = messages.filter((m) => m[0] === OUT.datagram).length;
 	/* a second's worth (500), and what refilled while they came */
 	assert.ok(count >= 400 && count <= 1200, `${count} came in`);
+	/* and the page is told once, with the cap, for its status bar */
+	const capped = messages.filter((m) => m[0] === OUT.capped);
+	assert.equal(capped.length, 1, `${capped.length} capped notices`);
+	assert.equal(capped[0].readUInt32BE(1), 256 << 10);
 });
 
 test("STUN's answers tell the page the relay's public address", async () => {

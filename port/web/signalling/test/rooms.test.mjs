@@ -787,6 +787,48 @@ test("a game's invite in the chat is its card, live, and over as the room ends",
 	assert.equal(card.inProgress, false);
 });
 
+test("the rooms' games are told to every page, for the server browser, as they change", lobbyOptions, async () => {
+	newAddress();
+	const hostPage = await host();
+	const room = hostPage.welcome.room;
+	const other = await lobbyPage();
+	/* a room without a game yet is not listed */
+	await sleep(250);
+	assert.ok(other.messages.filter((m) => m.type === "games").every((m) => !m.games.some((g) => g.room === room)));
+
+	hostPage.send(gameOf({ map: "bloodgulch", players: 1 }));
+	let listed = (await other.last("games", (m) => m.games.some((g) => g.room === room))).games.find((g) => g.room === room);
+	assert.equal(listed.secret, hostPage.welcome.secret);
+	assert.equal(listed.hostId, HOST_ID);
+	assert.equal(listed.netVersion, 7);
+	assert.equal(listed.name, "New001");
+	assert.equal(listed.map, "bloodgulch");
+	assert.equal(listed.gametype, "Slayer");
+	assert.equal(listed.engine, "slayer");
+	assert.equal(listed.players, 1);
+	assert.equal(listed.maximumPlayers, 16);
+	assert.equal(listed.open, true);
+	assert.equal(listed.inProgress, false);
+	assert.equal(listed.teams, false);
+	assert.equal(listed.machines, 1);
+
+	/* a page that comes has the list at once */
+	const late = await lobbyPage();
+	const first = await late.last("games");
+	assert.ok(first.games.some((g) => g.room === room));
+
+	/* the game's name is listed only without a blocked word */
+	await sleep(1100);
+	hostPage.send(gameOf({ map: "bloodgulch", players: 2, name: "n1gger" }));
+	listed = (await other.last("games", (m) => m.games.find((g) => g.room === room)?.players === 2)).games
+		.find((g) => g.room === room);
+	assert.equal(listed.name, "");
+
+	/* the room ends: it is gone from the list */
+	hostPage.socket.close();
+	await other.last("games", (m) => !m.games.some((g) => g.room === room));
+});
+
 test("an invite to no room, or with another secret, is said as text", lobbyOptions, async () => {
 	newAddress();
 	const hostPage = await host();

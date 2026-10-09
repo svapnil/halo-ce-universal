@@ -20,6 +20,7 @@ numbers are big-endian. A handle is the game's, for one socket of a page.
 	4 close     handle                       4 data      handle, bytes
 	5 resolve   number, name                 5 closed    handle
 	6 round trip address, port, milliseconds 6 resolved  number, address (0: none)
+	                                         7 capped    bytes a second (the cap)
 	0x7f ping (echoed)                       0x7f ping   number
 
 What it lets a page do is only what native games need, so that it serves
@@ -147,9 +148,15 @@ const (
 	// and from them: the host sends a joiner about 40 (15 KiB) a second in
 	// multiplayer, and some 250 KiB in a big co-op game (the host's AI goes to
 	// every player). The cap bounds what one session can cost the machine
-	// and the egress bill: a game past it loses packets at the relay.
-	packetsInPerSecond = 500
-	bytesInPerSecond   = 256 << 10
+	// and the egress bill: a game past it loses packets at the relay, and
+	// lags (a 16-player server with many objects sends more, measured
+	// 2026-10-08). The page is told (7, capped, once each
+	// cappedNoticeInterval): a toast, "Cross-platform play may lag", with
+	// this number, and its status bar (app/src/relay_bridge.js, App.jsx's
+	// OnlineToast and "relay-capped").
+	packetsInPerSecond   = 500
+	bytesInPerSecond     = 256 << 10
+	cappedNoticeInterval = 30 * time.Second
 	// to the brokers: a few small messages a second
 	tcpBytesPerSecond = 64 << 10
 	// a page looks up the brokers and STUN servers as it starts, and again
@@ -210,6 +217,8 @@ const (
 	outData      = 4
 	outClosed    = 5
 	outResolved  = 6
+	// (the page's relay_bridge.js takes this one: the game never sees it)
+	outCapped = 7
 
 	ping = 0x7f
 )
@@ -530,6 +539,8 @@ type session struct {
 	peerReports *bucket
 	counts      counts
 	tunnels     map[string]*tunnelCount
+	// when the page was last told its peers send past the cap (outCapped)
+	cappedTold time.Time
 }
 
 func newSession(conn *websocket.Conn, from, edge string) *session {
@@ -824,7 +835,17 @@ func (s *session) udpReader(handle uint32, conn *net.UDPConn) {
 		// be had through a peer)
 		if !s.packetsIn.take(1) || !s.bytesIn.take(float64(size)) {
 			s.refuse("rate in")
+			// the page is told once, and again only after a quiet while (a
+			// game that stays over the cap is told once; one that comes back
+			// to it is told again); sent after the lock (send takes it)
+			tell := time.Since(s.cappedTold) >= cappedNoticeInterval
+			if tell {
+				s.cappedTold = time.Now()
+			}
 			s.lock.Unlock()
+			if tell {
+				s.send(record(outCapped, u32(bytesInPerSecond)), false)
+			}
 			continue
 		}
 		s.counts.datagramsIn++

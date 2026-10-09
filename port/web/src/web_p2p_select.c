@@ -392,7 +392,8 @@ void p2p_set_game_listing(const char *name, const char *map, const char *gametyp
 	p2p_web_set_game_listing(name, map, gametype, engine_type, open, in_progress, has_teams);
 }
 
-/* ---- the server browser: desktop builds' public games */
+/* ---- the server browser: the browsers' games (the rooms', named [WEB]:
+web_p2p.c), then desktop builds' public games */
 
 void p2p_lobby_browse(int on)
 {
@@ -410,7 +411,11 @@ void p2p_lobby_refresh(void)
 
 int p2p_lobby_games(struct p2p_listing *games, int maximum_count)
 {
-	return native_running() ? p2p_native_lobby_games(games, maximum_count) : 0;
+	int count = p2p_web_lobby_games(games, maximum_count);
+
+	if (native_running())
+		count += p2p_native_lobby_games(games + count, maximum_count - count);
+	return count;
 }
 
 void p2p_lobby_mark_failed(const unsigned char *identifier)

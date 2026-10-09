@@ -458,6 +458,10 @@ enum
 	_relay_in_closed,
 	/* a lookup's number, the address (0: none) */
 	_relay_in_resolved,
+	/* bytes a second: the peers send more than the relay passes
+	(relay/main.go's bytesInPerSecond). The page's relay_bridge.js takes it
+	for its status bar; it never reaches here */
+	_relay_in_capped,
 };
 
 struct web_relay_ring

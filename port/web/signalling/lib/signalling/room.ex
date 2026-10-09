@@ -124,6 +124,23 @@ defmodule Signalling.Room do
     |> Enum.sort_by(& &1.created_at)
   end
 
+  # every room with a game and its host, as the Server Browser lists them
+  # (Signalling.Games): with its invite, which its card has made public
+  # already. (A room that does not answer at once is left out)
+  def listings do
+    Registry.select(Signalling.Rooms, [{{:_, :"$1", :_}, [], [:"$1"]}])
+    |> Task.async_stream(&GenServer.call(&1, :listing, 1000),
+      timeout: 2000,
+      on_timeout: :kill_task,
+      ordered: false
+    )
+    |> Enum.flat_map(fn
+      {:ok, {:ok, listing}} -> [listing]
+      _ -> []
+    end)
+    |> Enum.sort_by(& &1.createdAt)
+  end
+
   # the calling page joins the room: {:ok, %{room, peer, host}}, the host's
   # id, net_version and SFU session
   def join(code, id, net_version, secret) do
@@ -278,6 +295,7 @@ defmodule Signalling.Room do
   end
 
   def handle_call(:state, _from, room), do: {:reply, state(room), room}
+  def handle_call(:listing, _from, room), do: {:reply, listing(room), room}
 
   def handle_call({:card, secret}, _from, room) do
     if Plug.Crypto.secure_compare(secret, room.secret) do
@@ -373,8 +391,42 @@ defmodule Signalling.Room do
       send(joiner, {:fail, "closed", "The host left"})
     end
 
+    Signalling.Games.changed()
     {:stop, :normal, room}
   end
+
+  # the room as the Server Browser lists it (Signalling.Games): {:ok, it},
+  # or :none without a game yet or while its host is away. The game's name
+  # only without a blocked word (the host types it), as the chat's cards
+  defp listing(%{game: game, host: host} = room) when game != nil and host != nil do
+    joiners = Map.values(room.joiners)
+    name = game[:name]
+
+    {:ok,
+     %{
+       room: room.code,
+       secret: room.secret,
+       hostId: room.id,
+       netVersion: room.net_version,
+       createdAt: room.created_at,
+       machines: 1 + Enum.count(joiners, &(&1.channels || &1.monitor == nil)),
+       name:
+         if(is_binary(name) and name != "" and not Signalling.ChatFilter.blocked?(name),
+           do: name,
+           else: ""
+         ),
+       map: game[:map],
+       gametype: game[:gametype],
+       engine: game[:engine],
+       players: game[:players],
+       maximumPlayers: game[:maximum_players],
+       open: game[:open] == true,
+       inProgress: game[:in_progress] == true,
+       teams: game[:teams] == true
+     }}
+  end
+
+  defp listing(_), do: :none
 
   # the room as /stats and the chat's cards have it
   defp state(room) do
@@ -396,14 +448,14 @@ defmodule Signalling.Room do
     }
   end
 
-  # tells the chat of the room as it is now, if the chat has a card of it
-  # (the chat lets most go: at most one a second for a room reaches pages)
-  defp changed(%{carded: true} = room) do
-    Signalling.Chat.room_changed(room.code, state(room))
+  # tells the Server Browser's list (Signalling.Games) of the room as it is
+  # now, and the chat, if the chat has a card of it (each lets most go: at
+  # most one a second reaches pages)
+  defp changed(room) do
+    Signalling.Games.changed()
+    if room.carded, do: Signalling.Chat.room_changed(room.code, state(room))
     room
   end
-
-  defp changed(room), do: room
 
   defp now, do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
 

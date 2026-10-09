@@ -19,6 +19,7 @@
 #   Signalling.OnlineCount  the count, as the pages get it
 #   Signalling.Chat     the lobby's chat
 #   Signalling.Typing   who types in it (the pages get how many)
+#   Signalling.Games    the rooms' games as the Server Browser lists them
 defmodule Signalling.Application do
   @moduledoc false
   use Application
@@ -45,6 +46,7 @@ defmodule Signalling.Application do
       Signalling.OnlineCount,
       Signalling.Chat,
       Signalling.Typing,
+      Signalling.Games,
       {Bandit,
        plug: Signalling.Router,
        scheme: :http,
