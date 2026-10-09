@@ -617,16 +617,16 @@ is worth little for anything else.
   one else reaches a page through it.
 - **Caps**, for a page that joins (a joiner sends its host about 35
   datagrams, 5 KiB, a second, and gets about 40, 15 KiB). Each session: 200
-  datagrams and 256 KiB a second to its peers, 500 and 256 KiB from them
+  datagrams and 256 KiB a second to its peers, 500 and 512 KiB from them
   (a big co-op game sends each player about 250 KiB, and a busy 16-player
   server with many objects more: past the cap, it loses packets at the
   relay, and the game lags. The relay tells the page (7, capped), once,
   and again after 30 s without: a toast, "Cross-platform play may lag",
-  says the relay passes 256 KiB/s and this host sends more, and the status
+  says the relay passes 512 KiB/s and this host sends more, and the status
   bar reads "Relay over its limit": `relay/main.go`'s `bytesInPerSecond`,
-  `relay_bridge.js`, `App.jsx`'s `OnlineToast` and `relay-capped`. Seen
-  2026-10-08: pages pinned at 256 KiB/s losing up to 80% of a host's
-  packets),
+  `relay_bridge.js`, `App.jsx`'s `OnlineToast` and `relay-capped`. It was
+  256 KiB until 2026-10-08, when pages were seen pinned at it, losing up to
+  80% of a host's packets; doubled then, the owner's call),
   64 KiB a second to the brokers, 2 UDP and 6 TCP sockets, 16
   destinations, 30 lookups a minute (10 at once). Sessions: 4 from an
   address, 400 in all, and one UDP port each (96 on Fly.io).

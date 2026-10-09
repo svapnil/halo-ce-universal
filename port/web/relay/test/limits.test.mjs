@@ -270,7 +270,7 @@ test("a session's UDP from its peers is capped too", async () => {
 	/* and the page is told once, with the cap, for its status bar */
 	const capped = messages.filter((m) => m[0] === OUT.capped);
 	assert.equal(capped.length, 1, `${capped.length} capped notices`);
-	assert.equal(capped[0].readUInt32BE(1), 256 << 10);
+	assert.equal(capped[0].readUInt32BE(1), 512 << 10);
 });
 
 test("STUN's answers tell the page the relay's public address", async () => {

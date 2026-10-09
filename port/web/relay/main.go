@@ -149,13 +149,14 @@ const (
 	// multiplayer, and some 250 KiB in a big co-op game (the host's AI goes to
 	// every player). The cap bounds what one session can cost the machine
 	// and the egress bill: a game past it loses packets at the relay, and
-	// lags (a 16-player server with many objects sends more, measured
-	// 2026-10-08). The page is told (7, capped, once each
-	// cappedNoticeInterval): a toast, "Cross-platform play may lag", with
-	// this number, and its status bar (app/src/relay_bridge.js, App.jsx's
-	// OnlineToast and "relay-capped").
+	// lags. 512 KiB since 2026-10-08, when busy 16-player servers with many
+	// objects were measured past the 256 before (pages pinned at it, losing
+	// up to 80% of the host's packets). The page is told (7, capped, once
+	// each cappedNoticeInterval): a toast, "Cross-platform play may lag",
+	// with this number, and its status bar (app/src/relay_bridge.js,
+	// App.jsx's OnlineToast and "relay-capped").
 	packetsInPerSecond   = 500
-	bytesInPerSecond     = 256 << 10
+	bytesInPerSecond     = 512 << 10
 	cappedNoticeInterval = 30 * time.Second
 	// to the brokers: a few small messages a second
 	tcpBytesPerSecond = 64 << 10
