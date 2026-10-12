@@ -157,6 +157,10 @@ void memory_watch_initialize(void);
 void memory_watch_protect(unsigned long address, unsigned long size);
 /* newest write generation of any page in the range */
 unsigned long memory_watch_generation(unsigned long address, unsigned long size);
+/* the same, sampled now whatever the frame (the browser build; elsewhere the same) */
+unsigned long memory_watch_generation_fresh(unsigned long address, unsigned long size);
+/* the browser build: the renderer presented a frame (memory_watch.c) */
+void memory_watch_frame_advance(void);
 /* changes whenever any page's generation does: while it stays the same, so
 do all generations */
 unsigned long memory_watch_serial(void);

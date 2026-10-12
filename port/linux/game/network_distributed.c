@@ -249,6 +249,9 @@ host has it (no further than that: between the two they would disagree for
 good, the host's player somewhere its own is not) */
 #define HOST_ACCEPT_TOLERANCE 3.5f
 #define LOCAL_CORRECTION_TOLERANCE 3.0f
+/* ... and how far a correction of a client's own unit may be before it is
+taken for a respawn or a teleporter, not a disagreement (statistics) */
+#define OWN_CORRECTION_NEAR 15.0f
 /* how fast a client's own player's unit moves at most (world units a tick) */
 #define MAXIMUM_PREDICTED_SPEED 2.0f
 /* ... on foot: this many times as fast as a player runs and jumps, or as
@@ -648,12 +651,23 @@ static struct distributed_batch distributed_batches[MAXIMUM_SENDERS];
 /* (the largest messages, packed a machine at a time) */
 static struct distributed_packer distributed_packer;
 
-/* for the automated tests' reports (network_test.c) */
+/* for the automated tests' reports (network_test.c), and the browser
+build's frame statistics (port/web/src/web_stats.c): own_corrections counts
+a client's own players' units put where the host had them, and the last
+such correction's distance (world units), whether it came of the host's
+echo of the client's own prediction, and the round trip then (ticks) */
 static struct
 {
 	long sent;
 	long received;
 	long corrections;
+	long own_corrections;
+	/* ... of those, the ones nearer than a respawn or a teleporter moves a
+	player (the rubber band: the host and the client disagreeing) */
+	long own_corrections_near;
+	real own_correction_distance;
+	boolean own_correction_predicted;
+	real own_correction_round_trip;
 } distributed_statistics;
 
 /* ---------- shared (network_distributed.h) */
@@ -666,6 +680,33 @@ void network_distributed_statistics(
 	*sent = distributed_statistics.sent;
 	*received = distributed_statistics.received;
 	*corrections = distributed_statistics.corrections;
+}
+
+void network_distributed_own_corrections(
+	long *count,
+	long *near_count,
+	real *distance,
+	boolean *predicted,
+	real *round_trip)
+{
+	*count = distributed_statistics.own_corrections;
+	*near_count = distributed_statistics.own_corrections_near;
+	*distance = distributed_statistics.own_correction_distance;
+	*predicted = distributed_statistics.own_correction_predicted;
+	*round_trip = distributed_statistics.own_correction_round_trip;
+}
+
+static void distributed_note_own_correction(
+	real_vector3d const *error,
+	boolean predicted)
+{
+	distributed_statistics.own_corrections++;
+	distributed_statistics.own_correction_distance =
+		(real)sqrt(error->i * error->i + error->j * error->j + error->k * error->k);
+	if (distributed_statistics.own_correction_distance < OWN_CORRECTION_NEAR)
+		distributed_statistics.own_corrections_near++;
+	distributed_statistics.own_correction_predicted = predicted;
+	distributed_statistics.own_correction_round_trip = distributed_own_round_trip;
 }
 
 void distributed_count_correction(
@@ -1675,6 +1716,7 @@ static void distributed_correct_own_unit(
 			{
 				return;
 			}
+			distributed_note_own_correction(&error, TRUE);
 			{
 				real_point3d before = object->object.position;
 
@@ -1699,6 +1741,18 @@ static void distributed_correct_own_unit(
 				}
 				return;
 			}
+		}
+	}
+	{
+		real_vector3d error;
+
+		error.i = position.x - object_get(unit_index)->object.position.x;
+		error.j = position.y - object_get(unit_index)->object.position.y;
+		error.k = position.z - object_get(unit_index)->object.position.z;
+		if (error.i * error.i + error.j * error.j + error.k * error.k >
+			LOCAL_CORRECTION_TOLERANCE * LOCAL_CORRECTION_TOLERANCE)
+		{
+			distributed_note_own_correction(&error, FALSE);
 		}
 	}
 	distributed_apply_state(unit_index, state, &position, LOCAL_CORRECTION_TOLERANCE, 0.0f, 0.0f, 0.0f);

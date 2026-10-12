@@ -418,6 +418,12 @@ static const struct config_setting config_settings[] =
 		"graphics with Mesa's driver (which can hang without), 0 never." },
 	{ "debug.gpu_stats", _config_boolean, "false", "HALO_GPU_STATS", _environment_set_is_true, _platform_all,
 		"Log the renderer's draw counts once a second." },
+	{ "debug.gpu_sync_shaders", _config_boolean, "false", "HALO_GPU_SYNC_SHADERS", _environment_set_is_true, _platform_all,
+		"In the browser build, wait for each shader program's link instead of\n"
+		"linking in the background (d3d8_gl.c); the desktop builds ignore it." },
+	{ "debug.frame_stats", _config_boolean, "false", "HALO_FRAME_STATS", _environment_set_is_true, _platform_all,
+		"In the browser build, log where each second's frames went once a second\n"
+		"(port/web/src/web_stats.c); the desktop builds ignore it." },
 	{ "debug.gpu_trace_frame", _config_integer, "-1", "HALO_GPU_TRACE", _environment_value, _platform_all,
 		"Log every draw of this frame; -1 none." },
 	{ "debug.gpu_trace_constants", _config_boolean, "false", "HALO_GPU_TRACE_CONSTANTS", _environment_set_is_true, _platform_all,

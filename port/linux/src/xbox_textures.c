@@ -14,6 +14,12 @@ A cached texture stays valid until any page it was read from is written;
 memory_watch.c detects that by write-protecting the pages.
 */
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+/* port/web/src/web_stats.c's: the uploads a frame holds */
+extern int web_stats_on;
+void web_stats_texture(unsigned long bytes, double ms);
+#endif
 #include "xgpu.h"
 #include "hud_hires.h"
 #include "menu_files.h"
@@ -1065,8 +1071,19 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 					entry->description.height, entry->size, entry->generation,
 					ones * 100 / entry->size, zeros * 100 / entry->size);
 			}
+#ifdef __EMSCRIPTEN__
+			{
+				double began = web_stats_on > 0 ? emscripten_get_now() : 0.0;
+
+				upload(entry->texture, entry->target, &entry->description, (const unsigned char *)entry->address, palette,
+					custom_edition_texels_order(entry->address));
+				if (began > 0.0)
+					web_stats_texture(entry->size, emscripten_get_now() - began);
+			}
+#else
 			upload(entry->texture, entry->target, &entry->description, (const unsigned char *)entry->address, palette,
 				custom_edition_texels_order(entry->address));
+#endif
 		}
 	}
 	entry->last_used_frame = texture_frame;

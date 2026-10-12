@@ -899,13 +899,18 @@ hidden page (Chrome runs a worker's timers on time there) takes in the
 network every tick, as a host must for its players; at 10 frames a second
 it added up to 100 ms to their lag. Where the page shows, a frame comes
 first (a display of 30 Hz or more). */
-EM_ASYNC_JS(void, web_wait_for_frame, (void), {
-	await new Promise(resolve => {
-		const timer = setTimeout(resolve, 33);
+EM_ASYNC_JS(int, web_wait_for_frame, (void), {
+	return await new Promise(resolve => {
+		const timer = setTimeout(() => resolve(1), 33);
 		if (typeof requestAnimationFrame == 'function')
-			requestAnimationFrame(() => { clearTimeout(timer); resolve(); });
+			requestAnimationFrame(() => { clearTimeout(timer); resolve(0); });
 	});
 });
+
+/* port/web/src/web_stats.c's: where the frames' time goes (debug.frame_stats) */
+void web_stats_swap_begin(void);
+void web_stats_wait_begin(void);
+void web_stats_wait_end(int timer);
 
 /* The page's (port/web/app/src/App.jsx), as the game's canvas takes the
 keyboard back: a panel over it (the page's Multiplayer menu, say) kept the
@@ -976,9 +981,13 @@ void platform_video_swap(void)
 	Uint64 interval, now;
 
 #endif
+#ifdef __EMSCRIPTEN__
+	web_stats_swap_begin();
+#endif
 	SDL_GL_SwapWindow(platform_window);
 #ifdef __EMSCRIPTEN__
-	web_wait_for_frame();
+	web_stats_wait_begin();
+	web_stats_wait_end(web_wait_for_frame());
 #elif !defined(HALO_ANDROID)
 	interval = frame_interval_ns();
 	if (!interval)

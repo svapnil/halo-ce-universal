@@ -47,6 +47,9 @@ the system's for sockets: it keeps the address in Winsock's layout itself.
 #include <stdio.h>
 #include <time.h>
 
+/* web_stats.c's: the records each way (debug.frame_stats) */
+void web_stats_relay(int in, int out);
+
 #include "posix.h"
 
 /* Winsock error codes (winsockx.h) */
@@ -587,6 +590,7 @@ static int relay_record(int type, const void *header, int header_size, const voi
 	__atomic_store_n(&relay_bridge.out.head, head + RELAY_RECORD_HEADER_SIZE + size, __ATOMIC_RELEASE);
 	__atomic_add_fetch(&relay_bridge.out_sequence, 1, __ATOMIC_SEQ_CST);
 	__builtin_wasm_memory_atomic_notify((int *)&relay_bridge.out_sequence, ~0u);
+	web_stats_relay(0, 1);
 	return 1;
 }
 
@@ -692,6 +696,7 @@ static void *relay_pump(void *argument)
 			__atomic_store_n(&relay_bridge.in.tail, tail, __ATOMIC_RELEASE);
 			relay_take(header[2], body, size);
 			took = 1;
+			web_stats_relay(1, 0);
 		}
 		if (took)
 			pthread_cond_broadcast(&net_changed);

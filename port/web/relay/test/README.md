@@ -38,6 +38,13 @@ maps in `assets/maps` (`tools/extract_maps.py`).
    ```
 
    or open `http://localhost:8765/#native=<invite>` in Chrome to play.
+   `drive.mjs` draws with SwiftShader (on the CPU) unless `ANGLE=metal`,
+   which draws with the Mac's GPU as a player's Chrome does: the way to
+   measure the game's frames (`?HALO_FRAME_STATS=1`, `port/web/README.md`).
+   `PROFILE=<stem>` writes a CPU profile of each page's game thread
+   (`<stem>-pageN.cpuprofile`, which Chrome's DevTools Performance panel
+   loads) for the whole run. `frame_stats_summary.py` sums a log's frame
+   statistics, and `profile_summary.py` a profile.
 4. Compare: each machine logs every player's state each second
    (`network test: tick ...`): `docker logs -t halo-native-host` and
    `page.log`. The relay logs each page's round trip, its traffic, and the

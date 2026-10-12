@@ -37,12 +37,30 @@ struct watched_range
 	unsigned long address, size;
 	unsigned long checksum;
 	unsigned long generation;
+	/* the frame the sample was last taken in: it is taken once in
+	WATCH_SAMPLE_FRAMES frames (memory_watch_frame_advance), where taking
+	it for every draw that read the range (the vertex mirror's pages, a
+	texture) was a sixth of the game thread's work, and once a frame a
+	fifth of what was left. What the game writes to a texture or a vertex
+	page shows that many frames late at most (a new map's bitmaps, say:
+	the game's own are static) */
+	unsigned long sampled_frame;
 };
+
+#define WATCH_SAMPLE_FRAMES 4UL
 
 static struct watched_range watched_ranges[WATCH_RANGE_SLOTS];
 static unsigned long watch_generation = 1;
 static unsigned long watch_serial = 1;
+static unsigned long watch_frame = 1;
 static pthread_mutex_t watch_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* the renderer's, as it presents a frame (d3d8_gl.c): the next frame
+samples each range again */
+void memory_watch_frame_advance(void)
+{
+	__atomic_add_fetch(&watch_frame, 1, __ATOMIC_RELAXED);
+}
 
 static unsigned long range_checksum(const unsigned char *bytes, unsigned long size)
 {
@@ -73,13 +91,14 @@ void memory_watch_protect(unsigned long address, unsigned long size)
 	(void)size;
 }
 
-unsigned long memory_watch_generation(unsigned long address, unsigned long size)
+static unsigned long generation_lookup(unsigned long address, unsigned long size, int fresh)
 {
-	unsigned long slot, probe, checksum, generation = 0;
+	unsigned long slot, probe, checksum = 0, generation = 0;
+	unsigned long frame = __atomic_load_n(&watch_frame, __ATOMIC_RELAXED);
+	int sampled = 0;
 
 	if (!size || !platform_is_contiguous((void *)address))
 		return 0;
-	checksum = range_checksum((const unsigned char *)address, size);
 	pthread_mutex_lock(&watch_lock);
 	slot = ((address >> 7) ^ (size * 2654435761UL)) % WATCH_RANGE_SLOTS;
 	for (probe = 0; probe < WATCH_RANGE_SLOTS; probe++)
@@ -88,6 +107,23 @@ unsigned long memory_watch_generation(unsigned long address, unsigned long size)
 
 		if (range->generation && (range->address != address || range->size != size))
 			continue;
+		if (!fresh && range->generation && frame - range->sampled_frame < WATCH_SAMPLE_FRAMES)
+		{
+			generation = range->generation;
+			break;
+		}
+		if (!sampled)
+		{
+			/* (the sample is read without the lock held: the other
+			threads need the lock meanwhile) */
+			pthread_mutex_unlock(&watch_lock);
+			checksum = range_checksum((const unsigned char *)address, size);
+			sampled = 1;
+			pthread_mutex_lock(&watch_lock);
+			/* (the table may have moved on: looked up again) */
+			probe = (unsigned long)-1;
+			continue;
+		}
 		if (!range->generation || range->checksum != checksum)
 		{
 			range->address = address;
@@ -95,6 +131,7 @@ unsigned long memory_watch_generation(unsigned long address, unsigned long size)
 			range->checksum = checksum;
 			range->generation = ++watch_generation;
 		}
+		range->sampled_frame = frame;
 		generation = range->generation;
 		break;
 	}
@@ -106,6 +143,19 @@ unsigned long memory_watch_generation(unsigned long address, unsigned long size)
 	}
 	pthread_mutex_unlock(&watch_lock);
 	return generation;
+}
+
+unsigned long memory_watch_generation(unsigned long address, unsigned long size)
+{
+	return generation_lookup(address, size, 0);
+}
+
+/* the sample taken now whatever the frame: for a range written lately
+(the vertex mirror's pages that the game rewrites every frame, which it
+streams instead once it sees them rewritten often enough, d3d8_gl.c) */
+unsigned long memory_watch_generation_fresh(unsigned long address, unsigned long size)
+{
+	return generation_lookup(address, size, 1);
 }
 
 /* the texture cache reuses an entry without asking for its generation while
@@ -287,6 +337,16 @@ unsigned long memory_watch_generation(unsigned long address, unsigned long size)
 			newest = page_generation[page];
 	}
 	return newest;
+}
+
+/* (the browser's: nothing to do with page faults) */
+void memory_watch_frame_advance(void)
+{
+}
+
+unsigned long memory_watch_generation_fresh(unsigned long address, unsigned long size)
+{
+	return memory_watch_generation(address, size);
 }
 
 unsigned long memory_watch_serial(void)

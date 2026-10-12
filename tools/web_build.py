@@ -114,7 +114,7 @@ DESKTOP_UNITS = {"posix_upnp.c", "posix_trace_marker.c"}
 # the browser's units with the host ABI, as posix_*.c (they implement posix.h),
 # and those with the game's (they call it, as port/linux/game's do)
 WEB_POSIX_UNITS = {"web_net.c", "web_crash.c"}
-WEB_GAME_UNITS = {"web_lobby.c"}
+WEB_GAME_UNITS = {"web_lobby.c", "web_stats.c"}
 
 # The page, its threads and its memory:
 #  - the game runs on a worker (PROXY_TO_PTHREAD) and draws on the canvas

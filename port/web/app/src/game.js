@@ -13,6 +13,7 @@ only.
 import { logLine, mark, watchGame } from "./crash.js";
 import { setPlaying } from "./keys.js";
 import { startLoading } from "./loading.js";
+import { startFrameStats } from "./frame_stats.js";
 import { startLobby } from "./lobby.js";
 import { startNetBridge } from "./net_bridge.js";
 import { startRelayBridge } from "./relay_bridge.js";
@@ -130,6 +131,7 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 		return;
 	}
 	const loading = startLoading(onLoading);
+	startFrameStats();
 	/* (crash.js reports it, and CrashPanel.jsx says that the game stopped) */
 	window.addEventListener("error", (event) => onStatus(`Error: ${event.message}`));
 

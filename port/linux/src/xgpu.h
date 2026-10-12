@@ -25,6 +25,10 @@ struct xgpu_capabilities
 	BOOL base_vertex;
 	/* ES 3.1 with fragment atomic counters: exact visibility test counts */
 	BOOL atomic_counters;
+	/* (the browser) KHR_parallel_shader_compile: shaders compiled and
+	linked in the background, asked about once a frame (d3d8_gl.c
+	program_get) */
+	BOOL parallel_compile;
 	/* "300 es" or "310 es" */
 	const char *shading_language;
 };

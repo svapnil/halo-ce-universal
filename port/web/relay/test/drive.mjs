@@ -8,7 +8,11 @@ tabs of one browser, as ?net=tabs needs.
 	node drive.mjs <url[|url...]> <seconds> <log file>
 
 CHROME: the browser (default: Google Chrome's place on macOS); CDP_PORT: its
-debugging port (9333: another for two runs at once); SCREENSHOT:
+debugging port (9333: another for two runs at once); ANGLE: the GPU backend
+(swiftshader, on the CPU; metal for the Mac's GPU); PROFILE: a file name
+stem to write a CPU profile of each page's busiest worker (the game's
+thread) to, as <stem>-<page>.cpuprofile (Chrome's DevTools open them);
+SCREENSHOT:
 a PNG file to save the first page as, at the end. The page's
 ownership notice is confirmed first, in the profile (a new one each run).
 The log ends with the tail of each page's game's own log, debug.txt (the
@@ -30,7 +34,8 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const chrome = spawn(process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", [
 	"--headless=new", `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`,
-	"--use-angle=swiftshader", "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist",
+	/* (ANGLE=metal draws with the Mac's GPU, as a player's Chrome does) */
+	`--use-angle=${process.env.ANGLE || "swiftshader"}`, "--enable-unsafe-swiftshader", "--ignore-gpu-blocklist",
 	"--disable-background-timer-throttling", "--disable-renderer-backgrounding",
 	"--disable-backgrounding-occluded-windows", "--autoplay-policy=no-user-gesture-required",
 	/* (the game's sound runs, as a player's does, but is not heard) */
@@ -88,9 +93,17 @@ socket.addEventListener("message", async (event) => {
 		}
 		await send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, sessionId);
 		await send("Runtime.enable", {}, sessionId);
+		if (process.env.PROFILE && targetInfo.type === "worker") {
+			await send("Profiler.enable", {}, sessionId);
+			await send("Profiler.setSamplingInterval", { interval: 500 }, sessionId);
+			await send("Profiler.start", {}, sessionId);
+			profiled.push({ sessionId, label });
+		}
 		await send("Runtime.runIfWaitingForDebugger", {}, sessionId);
 	}
 });
+/* the workers being profiled (PROFILE) */
+const profiled = [];
 
 await send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true });
 async function openTab(address) {
@@ -116,6 +129,30 @@ for (const [index, url] of urls.entries()) {
 	await sleep(3000);
 }
 await sleep(Number(seconds) * 1000);
+if (process.env.PROFILE) {
+	/* each page's worker with the most samples running (not waiting): the
+	game's thread (its other threads mostly wait) */
+	const best = new Map();
+	const waiting = new Set(["(idle)", "(program)", "(garbage collector)", "_do_futex_wait", "__timedwait_cp",
+		"emscripten_futex_wait", "_emscripten_thread_mailbox_await"]);
+	for (const { sessionId, label } of profiled) {
+		const result = await send("Profiler.stop", {}, sessionId);
+		const profile = result?.profile;
+		if (!profile) {
+			continue;
+		}
+		const names = new Map(profile.nodes.map((node) => [node.id, node.callFrame.functionName]));
+		const samples = profile.samples.filter((id) => !waiting.has(names.get(id))).length;
+		if (samples > (best.get(label)?.samples ?? 0)) {
+			best.set(label, { samples, profile });
+		}
+	}
+	for (const [label, { samples, profile }] of best) {
+		const file = `${process.env.PROFILE}-${label.replace(" ", "")}.cpuprofile`;
+		writeFileSync(file, JSON.stringify(profile));
+		log(`wrote ${file} (${samples} samples)`);
+	}
+}
 if (process.env.SCREENSHOT) {
 	const shot = await send("Page.captureScreenshot", { format: "png" }, first);
 	writeFileSync(process.env.SCREENSHOT, Buffer.from(shot.data, "base64"));

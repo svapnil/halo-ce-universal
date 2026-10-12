@@ -99,9 +99,16 @@ EMSCRIPTEN_KEEPALIVE struct web_crash_state *web_crash_state(void)
 	return &state;
 }
 
+/* web_stats.c's: how long the heap's walk takes (debug.frame_stats: it
+holds malloc's lock meanwhile) */
+void web_stats_heap_walk(double ms);
+
 static void update_heap(void)
 {
+	double began = emscripten_get_now();
 	struct mallinfo info = mallinfo();
+
+	web_stats_heap_walk(emscripten_get_now() - began);
 
 	__atomic_store_n(&state.heap_size, (unsigned int)(emscripten_get_heap_size() >> 10), __ATOMIC_RELAXED);
 	__atomic_store_n(&state.heap_maximum, (unsigned int)(emscripten_get_heap_max() >> 10), __ATOMIC_RELAXED);

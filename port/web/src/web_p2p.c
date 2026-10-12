@@ -48,6 +48,9 @@ only look up and create stand-ins, and queue datagrams.
 #include <stdlib.h>
 #include <string.h>
 
+/* web_stats.c's: the records each way (debug.frame_stats) */
+void web_stats_net(int in, int out);
+
 enum
 {
 	IDENTIFIER_SIZE = 6,
@@ -415,6 +418,7 @@ static int out_record(int link, int type, const void *header, int header_size, c
 	__atomic_store_n(&bridge.out.head, head + RECORD_HEADER_SIZE + size, __ATOMIC_RELEASE);
 	__atomic_add_fetch(&bridge.out_sequence, 1, __ATOMIC_SEQ_CST);
 	__builtin_wasm_memory_atomic_notify((int *)&bridge.out_sequence, ~0u);
+	web_stats_net(0, 1);
 	return 1;
 }
 
@@ -1116,6 +1120,7 @@ static void bridge_readable(void)
 		ring_copy_out(&bridge.in, tail + RECORD_HEADER_SIZE, body, size);
 		__atomic_store_n(&bridge.in.tail, tail + RECORD_HEADER_SIZE + size, __ATOMIC_RELEASE);
 		taken = 1;
+		web_stats_net(1, 0);
 		link = header[2];
 		if (link >= MAXIMUM_LINKS)
 			continue;

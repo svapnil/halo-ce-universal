@@ -21,6 +21,9 @@ Conventions carried over from the Xbox:
 - Vertex data is read from guest memory at draw time.
 */
 
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #include "xgpu.h"
 #include "sdl_platform.h"
 #include "halo_ui_pointer.h"
@@ -372,6 +375,10 @@ struct program_entry
 	GLuint vertex_shader;
 	GLuint fragment_shader;
 	GLuint program;
+	/* (the browser) still being linked, and the frame it was last asked
+	about (program_poll) */
+	BOOL pending;
+	unsigned long polled_frame;
 	GLint constants;
 	GLint viewport_scale;
 	GLint viewport_offset;
@@ -573,7 +580,7 @@ static struct gl_device device;
 static struct
 {
 	unsigned long draws, immediate_draws, clears, presents;
-	unsigned long skipped_no_program, skipped_no_target, skipped_link;
+	unsigned long skipped_no_program, skipped_no_target, skipped_link, skipped_pending;
 	unsigned long target_changes;
 	/* vertex and index bytes drawn from the mirror, and streamed */
 	unsigned long mirrored_bytes, streamed_bytes;
@@ -1054,14 +1061,51 @@ void WINAPI D3DDevice_BlockUntilVerticalBlank(void)
 
 /* ---------- GL helpers */
 
+#ifdef __EMSCRIPTEN__
+/* port/web/src/web_stats.c's: the compiles and links a frame holds */
+extern int web_stats_on;
+void web_stats_shader(double ms);
+#define SHADER_STEP_BEGIN() double shader_step_began = web_stats_on > 0 ? emscripten_get_now() : 0.0
+#define SHADER_STEP_END() do { if (shader_step_began > 0.0) web_stats_shader(emscripten_get_now() - shader_step_began); } while (0)
+#else
+#define SHADER_STEP_BEGIN() do {} while (0)
+#define SHADER_STEP_END() do {} while (0)
+#endif
+
+#ifdef __EMSCRIPTEN__
+#ifndef GL_COMPLETION_STATUS_KHR
+#define GL_COMPLETION_STATUS_KHR 0x91B1
+#endif
+/* the caches' shaders, compiled in the background (parallel_compile):
+asking for the status here would wait for the compile; a failure shows at
+the program's link (program_poll). Otherwise as xgpu_compile_shader */
+GLuint xgpu_compile_shader(GLenum type, const char *source, const char *what);
+
+static GLuint compile_shader_deferred(GLenum type, const char *source, const char *what)
+{
+	GLuint shader;
+
+	if (!xgpu_capabilities.parallel_compile)
+		return xgpu_compile_shader(type, source, what);
+	shader = glCreateShader(type);
+	glShaderSource(shader, 1, &source, NULL);
+	glCompileShader(shader);
+	return shader;
+}
+#else
+#define compile_shader_deferred xgpu_compile_shader
+#endif
+
 GLuint xgpu_compile_shader(GLenum type, const char *source, const char *what)
 {
 	GLuint shader = glCreateShader(type);
 	GLint status = 0;
+	SHADER_STEP_BEGIN();
 
 	glShaderSource(shader, 1, &source, NULL);
 	glCompileShader(shader);
 	glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+	SHADER_STEP_END();
 	if (!status)
 	{
 		char log[4096];
@@ -1079,10 +1123,13 @@ GLuint xgpu_link_program(GLuint vertex_shader, GLuint fragment_shader, const cha
 	GLuint program = glCreateProgram();
 	GLint status = 0;
 
+	SHADER_STEP_BEGIN();
+
 	glAttachShader(program, vertex_shader);
 	glAttachShader(program, fragment_shader);
 	glLinkProgram(program);
 	glGetProgramiv(program, GL_LINK_STATUS, &status);
+	SHADER_STEP_END();
 	if (!status)
 	{
 		char log[4096];
@@ -1552,9 +1599,15 @@ static void gl_initialize(void)
 			(host_gl_has_extension("GL_EXT_texture_compression_dxt1") &&
 			host_gl_has_extension("GL_ANGLE_texture_compression_dxt3") &&
 			host_gl_has_extension("GL_ANGLE_texture_compression_dxt5"));
-		platform_log("OpenGL ES %d.%d: copy image %d, border clamp %d, anisotropy %d, S3TC %d, sample counting %d",
+#ifdef __EMSCRIPTEN__
+		xgpu_capabilities.parallel_compile = host_gl_has_extension("GL_KHR_parallel_shader_compile") &&
+			!config_boolean("debug.gpu_sync_shaders");
+#endif
+		platform_log("OpenGL ES %d.%d: copy image %d, border clamp %d, anisotropy %d, S3TC %d, sample counting %d, "
+			"parallel shader compile %d",
 			(int)major, (int)minor, xgpu_capabilities.copy_image, xgpu_capabilities.border_clamp,
-			xgpu_capabilities.anisotropy, xgpu_capabilities.s3tc, xgpu_capabilities.atomic_counters);
+			xgpu_capabilities.anisotropy, xgpu_capabilities.s3tc, xgpu_capabilities.atomic_counters,
+			xgpu_capabilities.parallel_compile);
 	}
 #else
 	if (config_boolean("debug.gl_debug"))
@@ -2592,7 +2645,7 @@ static GLuint vertex_shader_get(struct vertex_shader_object *program, BOOL immed
 		char *source = nv2a_vertex_shader_to_glsl(program->instructions, program->instruction_count,
 			immediate ? 0 : device.vertex_shader->packed_mask, lit ? &program->lighting : NULL);
 
-		*shader = xgpu_compile_shader(GL_VERTEX_SHADER, source, "vertex");
+		*shader = compile_shader_deferred(GL_VERTEX_SHADER, source, "vertex");
 		if (debug_settings.dump_shaders)
 		{
 			char path[512];
@@ -2644,7 +2697,7 @@ static GLuint fragment_shader_get(const struct nv2a_pixel_shader_key *key)
 	entry->hash = hash;
 	entry->key = *key;
 	source = nv2a_pixel_shader_to_glsl(key);
-	entry->shader = xgpu_compile_shader(GL_FRAGMENT_SHADER, source, "pixel");
+	entry->shader = compile_shader_deferred(GL_FRAGMENT_SHADER, source, "pixel");
 	if (debug_settings.dump_shaders)
 	{
 		char path[512];
@@ -2664,38 +2717,11 @@ static GLuint fragment_shader_get(const struct nv2a_pixel_shader_key *key)
 	return entry->shader;
 }
 
-static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_shader)
+/* the program's uniforms, once it is linked */
+static void program_finish(struct program_entry *entry)
 {
-	static struct program_entry *last;
-	unsigned long hash = (vertex_shader * 2654435761UL) ^ fragment_shader;
-	struct program_entry **bucket = &program_buckets[hash % PROGRAM_BUCKETS];
-	struct program_entry *entry;
 	int stage;
 
-	if (last && last->vertex_shader == vertex_shader && last->fragment_shader == fragment_shader)
-		return last;
-	for (entry = *bucket; entry; entry = entry->next)
-	{
-		if (entry->vertex_shader == vertex_shader && entry->fragment_shader == fragment_shader)
-		{
-			if (!entry->program)
-				return NULL;
-			last = entry;
-			return entry;
-		}
-	}
-	entry = calloc(1, sizeof(*entry));
-	entry->vertex_shader = vertex_shader;
-	entry->fragment_shader = fragment_shader;
-	memset(&entry->uniforms, 0xff, sizeof(entry->uniforms));
-	entry->next = *bucket;
-	*bucket = entry;
-	if (!vertex_shader || !fragment_shader)
-		return NULL;
-
-	entry->program = xgpu_link_program(vertex_shader, fragment_shader, "shader");
-	if (!entry->program)
-		return NULL;
 	state_program(entry->program);
 	entry->constants = glGetUniformLocation(entry->program, "c");
 	entry->constant_count = XGPU_VERTEX_CONSTANT_COUNT;
@@ -2749,6 +2775,126 @@ static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_s
 		snprintf(name, sizeof(name), "tex%d", stage);
 		glUniform1i(glGetUniformLocation(entry->program, name), stage);
 	}
+}
+
+#ifdef __EMSCRIPTEN__
+/* how many linked programs are taken up in one frame: taking one up reads
+its uniforms' locations, which Emscripten prepares by asking WebGL for
+every active uniform the first time (the vertex constants are an array of
+up to 192), 5 to 20 ms a program; a level's first frames link dozens */
+#define PROGRAM_FINISHES_PER_FRAME 2
+
+/* a pending program's link, once a frame: done, its uniforms are read
+(or, failed, it is given up, with the shaders' logs) */
+static void program_poll(struct program_entry *entry)
+{
+	static unsigned long finished_frame, finished_count;
+	GLint status = 0;
+
+	if (entry->polled_frame == device.frame)
+		return;
+	if (finished_frame != device.frame)
+	{
+		finished_frame = device.frame;
+		finished_count = 0;
+	}
+	if (finished_count >= PROGRAM_FINISHES_PER_FRAME)
+		return;
+	entry->polled_frame = device.frame;
+	glGetProgramiv(entry->program, GL_COMPLETION_STATUS_KHR, &status);
+	if (!status)
+		return;
+	finished_count++;
+	entry->pending = FALSE;
+	glGetProgramiv(entry->program, GL_LINK_STATUS, &status);
+	if (!status)
+	{
+		char log[4096];
+		GLuint shaders[2] = { entry->vertex_shader, entry->fragment_shader };
+		int index;
+
+		glGetProgramInfoLog(entry->program, sizeof(log), NULL, log);
+		platform_log("cannot link the shader program: %s", log);
+		for (index = 0; index < 2; index++)
+		{
+			glGetShaderiv(shaders[index], GL_COMPILE_STATUS, &status);
+			if (!status)
+			{
+				glGetShaderInfoLog(shaders[index], sizeof(log), NULL, log);
+				platform_log("cannot compile the %s shader:\n%s", index ? "pixel" : "vertex", log);
+			}
+		}
+		glDeleteProgram(entry->program);
+		entry->program = 0;
+		return;
+	}
+	program_finish(entry);
+}
+#endif
+
+/* the program of the two shaders: NULL for one that failed, and for one
+that is still being linked (*pending; in the browser, where the link is
+asynchronous: KHR_parallel_shader_compile) */
+static struct program_entry *program_get(GLuint vertex_shader, GLuint fragment_shader, BOOL *pending)
+{
+	static struct program_entry *last;
+	unsigned long hash = (vertex_shader * 2654435761UL) ^ fragment_shader;
+	struct program_entry **bucket = &program_buckets[hash % PROGRAM_BUCKETS];
+	struct program_entry *entry;
+
+	*pending = FALSE;
+	if (last && last->vertex_shader == vertex_shader && last->fragment_shader == fragment_shader)
+		return last;
+	for (entry = *bucket; entry; entry = entry->next)
+	{
+		if (entry->vertex_shader == vertex_shader && entry->fragment_shader == fragment_shader)
+		{
+#ifdef __EMSCRIPTEN__
+			if (entry->pending)
+			{
+				program_poll(entry);
+				if (entry->pending)
+				{
+					*pending = TRUE;
+					return NULL;
+				}
+			}
+#endif
+			if (!entry->program)
+				return NULL;
+			last = entry;
+			return entry;
+		}
+	}
+	entry = calloc(1, sizeof(*entry));
+	entry->vertex_shader = vertex_shader;
+	entry->fragment_shader = fragment_shader;
+	memset(&entry->uniforms, 0xff, sizeof(entry->uniforms));
+	entry->next = *bucket;
+	*bucket = entry;
+	if (!vertex_shader || !fragment_shader)
+		return NULL;
+
+#ifdef __EMSCRIPTEN__
+	if (xgpu_capabilities.parallel_compile)
+	{
+		/* linked in the background: the draws that need it are skipped
+		until it is done, a few frames, where waiting for the link here
+		(tens to hundreds of milliseconds on Metal) stalled the game */
+		entry->program = glCreateProgram();
+		glAttachShader(entry->program, vertex_shader);
+		glAttachShader(entry->program, fragment_shader);
+		glLinkProgram(entry->program);
+		entry->pending = TRUE;
+		entry->polled_frame = device.frame;
+		*pending = TRUE;
+		return NULL;
+	}
+#endif
+	entry->program = xgpu_link_program(vertex_shader, fragment_shader, "shader");
+	if (!entry->program)
+		return NULL;
+	program_finish(entry);
 	last = entry;
 	return entry;
 }
@@ -3431,6 +3577,7 @@ static struct program_entry *prepare_draw(BOOL immediate)
 	struct program_entry *entry;
 	struct draw_uniforms uniforms;
 	BOOL has_depth = FALSE;
+	BOOL pending;
 	int stage;
 
 	if (!device.gl_ready || !program || !device.vertex_shader || !program->instructions)
@@ -3491,11 +3638,12 @@ static struct program_entry *prepare_draw(BOOL immediate)
 #endif
 
 	entry = NULL;
+	pending = FALSE;
 	if (program->lighting.lights && !program->lighting_failed && per_pixel_lighting())
 	{
 		key.per_pixel_lighting = (unsigned char)program->lighting.lights;
-		entry = program_get(vertex_shader_get(program, immediate, TRUE), fragment_shader_get(&key));
-		if (!entry)
+		entry = program_get(vertex_shader_get(program, immediate, TRUE), fragment_shader_get(&key), &pending);
+		if (!entry && !pending)
 		{
 			/* drawn as the vertex shader lights it instead (not at all,
 			were it to fail too) */
@@ -3505,11 +3653,14 @@ static struct program_entry *prepare_draw(BOOL immediate)
 			key.per_pixel_lighting = 0;
 		}
 	}
-	if (!entry)
-		entry = program_get(vertex_shader_get(program, immediate, FALSE), fragment_shader_get(&key));
+	if (!entry && !pending)
+		entry = program_get(vertex_shader_get(program, immediate, FALSE), fragment_shader_get(&key), &pending);
 	if (!entry)
 	{
-		stats.skipped_link++;
+		if (pending)
+			stats.skipped_pending++;
+		else
+			stats.skipped_link++;
 		gl_check_errors("program");
 		return NULL;
 	}
@@ -3864,6 +4015,21 @@ static struct
 	unsigned long rewritten_frame[MIRROR_PAGE_COUNT];
 } mirror;
 
+/* a page's generation now: sampled fresh (in the browser, where the sample
+is otherwise a few frames old: memory_watch.c) while the page was uploaded
+or rewritten lately, as a page the game rewrites every frame is, so that
+its rewrites are seen each frame and it goes volatile as before */
+#define MIRROR_STABLE_FRAMES 8
+
+static unsigned long mirror_page_generation(unsigned long page)
+{
+	unsigned long address = PLATFORM_CONTIGUOUS_BASE + page * MIRROR_PAGE_SIZE;
+
+	if (device.frame - mirror.rewritten_frame[page] < MIRROR_STABLE_FRAMES)
+		return memory_watch_generation_fresh(address, MIRROR_PAGE_SIZE);
+	return memory_watch_generation(address, MIRROR_PAGE_SIZE);
+}
+
 /* uploads the pages of [first, last) that are absent or stale; FALSE if one
 of them turns out to be volatile */
 static BOOL mirror_refresh(unsigned long first, unsigned long last)
@@ -3886,8 +4052,7 @@ static BOOL mirror_refresh(unsigned long first, unsigned long last)
 	for (page = first; page < last; page++)
 	{
 		BOOL written = mirror.state[page] == _mirror_page_present &&
-			memory_watch_generation(PLATFORM_CONTIGUOUS_BASE + page * MIRROR_PAGE_SIZE, MIRROR_PAGE_SIZE) >
-			mirror.generation[page];
+			mirror_page_generation(page) > mirror.generation[page];
 
 		stale[page - first] = mirror.state[page] != _mirror_page_present || written;
 		if (written)
@@ -3936,7 +4101,7 @@ static BOOL mirror_refresh(unsigned long first, unsigned long last)
 		memory_watch_protect(address, size);
 		for (; page < run; page++)
 		{
-			mirror.generation[page] = memory_watch_generation(PLATFORM_CONTIGUOUS_BASE + page * MIRROR_PAGE_SIZE,
+			mirror.generation[page] = memory_watch_generation_fresh(PLATFORM_CONTIGUOUS_BASE + page * MIRROR_PAGE_SIZE,
 				MIRROR_PAGE_SIZE);
 			mirror.state[page] = _mirror_page_present;
 		}
@@ -3977,6 +4142,7 @@ static BOOL mirror_range(unsigned long address, unsigned long size, GLuint *buff
 	unsigned long start = address - PLATFORM_CONTIGUOUS_BASE;
 	unsigned long segment, first, last, page, oldest = ~0UL, newest = 0;
 	BOOL present = TRUE;
+	BOOL recent = FALSE;
 
 	if (!size || address < PLATFORM_CONTIGUOUS_BASE || start + size > PLATFORM_CONTIGUOUS_SIZE)
 		return FALSE;
@@ -4004,8 +4170,10 @@ static BOOL mirror_range(unsigned long address, unsigned long size, GLuint *buff
 			if (mirror.generation[page] > newest)
 				newest = mirror.generation[page];
 		}
+		if (device.frame - mirror.rewritten_frame[page] < MIRROR_STABLE_FRAMES)
+			recent = TRUE;
 	}
-	if (!present || memory_watch_generation(address, size) > oldest)
+	if (!present || (recent ? memory_watch_generation_fresh(address, size) : memory_watch_generation(address, size)) > oldest)
 	{
 		if (!mirror_refresh(first, last))
 			return FALSE;
@@ -4900,12 +5068,16 @@ void WINAPI D3DDevice_Present(CONST RECT *source_rectangle, CONST RECT *destinat
 	}
 	device.frame++;
 	stats.presents++;
+#ifdef __EMSCRIPTEN__
+	memory_watch_frame_advance();
+#endif
 	if (debug_settings.statistics && device.frame % 60 == 0)
 	{
-		platform_log("frame %lu: %lu draws, %lu immediate, %lu clears, %lu target changes; skipped %lu no program, %lu no target, %lu link; "
-			"%lu KB mirrored, %lu KB streamed",
+		platform_log("frame %lu: %lu draws, %lu immediate, %lu clears, %lu target changes; skipped %lu no program, %lu no target, %lu link, "
+			"%lu linking; %lu KB mirrored, %lu KB streamed",
 			device.frame, stats.draws / stats.presents, stats.immediate_draws / stats.presents, stats.clears / stats.presents,
 			stats.target_changes / stats.presents, stats.skipped_no_program, stats.skipped_no_target, stats.skipped_link,
+			stats.skipped_pending,
 			stats.mirrored_bytes / stats.presents / 1024, stats.streamed_bytes / stats.presents / 1024);
 		memset(&stats, 0, sizeof(stats));
 	}

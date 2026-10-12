@@ -71,6 +71,41 @@ variable of the same name, which `port_config.c` reads. For example
 <http://localhost:8765/?HALO_GL_DEBUG=1&HALO_GPU_STATS=1> logs the WebGL
 errors and the draw counts in the console.
 
+Frame statistics: `?HALO_FRAME_STATS=1` (`debug.frame_stats`) logs, once a
+second, where the game's thread's frames went (`src/web_stats.c`): how
+long each frame's work took and how long it waited for the browser's next
+frame, the ticks run, and for every frame of more than 25 ms of work what
+it held: shader compiles and links, texture uploads, waits for the sound
+mixer's lock, the network's records, and a client's own player put where
+the host had it (a correction: the rubber band, once near; a respawn or a
+teleporter, far). The page logs its own main thread's long tasks beside
+them (`app/src/frame_stats.js`; `&HALO_FRAME_STATS_LOAD=<ms>` keeps that
+thread busy for that long in every 100, to see what a slow page does to
+the game: the network's records and the sound go through it). Measured
+this way (2026-10-10, a two-page bot game on an Apple M3 Pro, in a
+headless Chrome drawing with Metal), nearly every frame over 50 ms was
+shader program links, 25 to 120 ms each and ten or twenty in one frame
+when a new weapon, vehicle or effect first showed, and a client whose
+frames stalled that long was put back where the host had it. The links
+are now made in the background (below). A CPU profile of the game's
+thread (`relay/test/drive.mjs`'s `PROFILE`, `relay/test/README.md`) then
+showed where the rest of its time went: 60 % of its work was
+`__builtin_return_address` in `datum_new` (upstream's check of a broken
+array), which in WebAssembly takes and parses a JavaScript stack trace at
+every allocation (`include/halo_web_fixups.h` makes it 0 now); 15 % was
+`memory_watch.c` sampling a texture's or a vertex page's memory for
+changes at every draw that read it (once in four frames now, but for a
+vertex page uploaded or rewritten in the last 8 frames, which is sampled
+at every draw as before: the mirror streams a page it sees rewritten
+often, `MIRROR_STABLE_FRAMES` in `d3d8_gl.c`); and a
+level's first frames took up dozens of freshly linked programs at once, 5
+to 20 ms each for Emscripten to prepare their uniforms (two a frame now,
+`PROGRAM_FINISHES_PER_FRAME`). With the three, the host's page went from
+8.9 ms of work a frame to 1.3, from 37 frames over 25 ms in five minutes
+(9 seconds holding one over 100 ms) to 3, all at the level's load, and
+from 9 corrections to none but respawns; a page whose main thread was
+kept busy half the time (`HALO_FRAME_STATS_LOAD=50`) played the same.
+
 Saves: the game's save drives (`z:`, `u:` and `t:`: player profiles,
 playlists, the checkpoint) and its settings (`config.toml`, which the
 game's Settings change: the keys, the video, the audio) are kept in the browser's Origin Private File
@@ -206,6 +241,19 @@ changed.
     buffer that queued draws read copies the whole buffer first. With the
     16 MB stream buffer and a hundred uploads a frame, that limited the
     menu to approximately 14 frames a second.
+  - shader programs are linked in the background
+    (`KHR_parallel_shader_compile`; `program_get` in `d3d8_gl.c`). The
+    game makes a program for each pair of vertex and pixel shader state
+    it first draws with, and WebGL's link waits for the GPU driver's
+    compile: on Metal 25 to 120 ms each, and a frame that first showed a
+    vehicle or an effect linked ten or twenty of them, a stall of 300 ms
+    or more (1.6 s at a level's start) that a client's position then paid
+    for (above). Now the link is started and the draw skipped, and the
+    program is asked about once a frame until it is done, a few frames
+    later: the object is not drawn until then. `debug.gpu_stats` counts
+    the draws skipped so (`linking`); `HALO_GPU_SYNC_SHADERS=1`
+    (`debug.gpu_sync_shaders`) waits for each link as before, to compare.
+    Where the extension is missing the link waits as before.
 - **Files.** The file system is WasmFS. `port/web/src/web_main.c` mounts
   `maps/` from the server with the fetch backend before the game's `main`
   (renamed `halo_main`) starts. A map is one zlib stream, so a map is
