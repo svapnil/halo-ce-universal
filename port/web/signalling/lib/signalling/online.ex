@@ -41,7 +41,13 @@ defmodule Signalling.Online do
         typing = Typing.count(Typing.current(), self())
 
         page =
-          Map.merge(page, %{name: Chat.name(nil), color: Chat.color(page.visitor), typing: typing})
+          Map.merge(page, %{
+            name: Chat.name(nil),
+            color: Chat.color(page.visitor),
+            typing: typing,
+            # its run of the same message (Chat.repeated/2)
+            run: nil
+          })
 
         history = %{type: "history", messages: Chat.history()}
         {:push, [count(OnlineCount.current()), text(history), typing(typing)], page}
@@ -63,8 +69,9 @@ defmodule Signalling.Online do
       {:ok, %{"type" => "chat", "text" => said} = data} ->
         say(Chat.text(said), data["started"] == true, page)
 
+      # (a ghost's typing is not told: Chat.ghost/2)
       {:ok, %{"type" => "typing"}} ->
-        Typing.typing()
+        unless Chat.ghosted?(page.visitor), do: Typing.typing()
         {:ok, page}
 
       _ ->
@@ -99,14 +106,20 @@ defmodule Signalling.Online do
   defp say(nil, _, page), do: {:ok, page}
 
   # (an invite to a room that is not there, or with another secret, is
-  # said as text)
+  # said as text). The same message 4 times in a row: the visitor is a
+  # ghost, from that one on (Chat.ghost/2)
   defp say(said, started, page) do
     if Limits.allow?(:chat, page.address) do
+      run = Chat.repeated(page.run, said)
+      page = %{page | run: run}
+      if Chat.spam?(run), do: Chat.ghost(page.visitor, page.name)
+      ghost = Chat.ghosted?(page.visitor)
+
       with {code, secret} = invite <- Chat.invite(said),
            {:ok, room, state} <- Room.card(code, secret) do
-        Chat.share(page.name, page.color, said, invite, room, state, started)
+        Chat.share(page.name, page.color, said, invite, room, state, started, ghost)
       else
-        _ -> Chat.say(page.name, page.color, said)
+        _ -> Chat.say(page.name, page.color, said, ghost)
       end
 
       Typing.done()

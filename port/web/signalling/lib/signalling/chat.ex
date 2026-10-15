@@ -10,6 +10,7 @@
 defmodule Signalling.Chat do
   @moduledoc false
   use GenServer
+  require Logger
 
   alias Signalling.ChatFilter
 
@@ -17,6 +18,14 @@ defmodule Signalling.Chat do
   @kept 50
   @longest_name 11
   @longest_text 200
+  # combining marks kept on a letter (clean/1)
+  @most_marks 2
+  # a ghost: a visitor whose messages only it sees (as a blocked word's),
+  # for a day, after the same message 4 times in a row (repeated/2)
+  @ghosts __MODULE__.Ghosts
+  @spam_repeats 4
+  @ghost_for :timer.hours(24)
+  @forget_ghosts_every :timer.minutes(10)
   @default_name "New001"
   # at most one card update a second for a room
   @card_every 1_000
@@ -38,13 +47,40 @@ defmodule Signalling.Chat do
   def history, do: GenServer.call(__MODULE__, :history)
 
   # a page says text (already its own: name/1, text/1, color/1). With a
-  # blocked word (Signalling.ChatFilter) in the text or the name, only the
-  # page is told: to it the message is said, with an id of its own, and the
-  # others see nothing, nor does the history keep it
-  def say(name, color, text) do
-    to = if ChatFilter.blocked?(text) or ChatFilter.blocked?(name), do: self(), else: :all
+  # blocked word (Signalling.ChatFilter) in the text or the name, or from a
+  # ghost (ghost: true), only the page is told: to it the message is said,
+  # with an id of its own, and the others see nothing, nor does the history
+  # keep it
+  def say(name, color, text, ghost \\ false) do
+    to =
+      if ghost or ChatFilter.blocked?(text) or ChatFilter.blocked?(name), do: self(), else: :all
+
     GenServer.cast(__MODULE__, {:say, name, color, text, to})
   end
+
+  # a page's run of the same message: {its last text, how many times in a
+  # row}, with text said after it
+  def repeated({text, n}, text), do: {text, n + 1}
+  def repeated(_, text), do: {text, 1}
+
+  # whether a run (repeated/2) is spam: its page's visitor is then a ghost
+  def spam?({_, n}), do: n >= @spam_repeats
+
+  # the visitor is a ghost for a day (its page's name, for the log)
+  def ghost(visitor, name) do
+    unless ghosted?(visitor), do: Logger.info("chat: ghosted #{visitor} (#{inspect(name)})")
+    :ets.insert(@ghosts, {visitor, now_ms() + @ghost_for})
+    :ok
+  end
+
+  def ghosted?(visitor) do
+    case :ets.lookup(@ghosts, visitor) do
+      [{_, until}] -> until > now_ms()
+      [] -> false
+    end
+  end
+
+  defp now_ms, do: System.monotonic_time(:millisecond)
 
   # the room and secret of a message that is an invite and nothing else, or
   # nil
@@ -60,9 +96,9 @@ defmodule Signalling.Chat do
   # a page says a game's invite, whose room is `room` (Signalling.Room.card:
   # its pid and state): a card of it. `started`: the host's page says it
   # as its game starts (else a player shares it). A blocked word in the
-  # name: only the page is told, as say/3
-  def share(name, color, text, {code, secret}, room, state, started) do
-    to = if ChatFilter.blocked?(name), do: self(), else: :all
+  # name, or a ghost's (ghost: true): only the page is told, as say/4
+  def share(name, color, text, {code, secret}, room, state, started, ghost \\ false) do
+    to = if ghost or ChatFilter.blocked?(name), do: self(), else: :all
 
     GenServer.cast(
       __MODULE__,
@@ -96,8 +132,20 @@ defmodule Signalling.Chat do
 
   def text(_), do: nil
 
+  # no control characters, and at most 2 combining marks on a letter: Zalgo
+  # text (a letter under dozens of marks) draws over the lines around it.
+  # Counted decomposed (NFD: "ệ" is "e" and 2 marks, however it was typed),
+  # then composed again (NFC)
   defp clean(text) do
-    if String.valid?(text), do: String.replace(text, ~r/[\p{C}]+/u, " "), else: ""
+    if String.valid?(text) do
+      text
+      |> String.replace(~r/[\p{C}]+/u, " ")
+      |> :unicode.characters_to_nfd_binary()
+      |> String.replace(~r/(\p{M}{#{@most_marks}})\p{M}+/u, "\\1")
+      |> :unicode.characters_to_nfc_binary()
+    else
+      ""
+    end
   end
 
   # cards: room code => the card as it is now; rooms: a carded room's pid
@@ -105,18 +153,22 @@ defmodule Signalling.Chat do
   # its card was last told the pages (monotonic ms), and pending: room codes
   # whose change waits to be told
   @impl true
-  def init(_),
-    do:
-      {:ok,
-       %{
-         next: 1,
-         messages: :queue.new(),
-         count: 0,
-         cards: %{},
-         rooms: %{},
-         told: %{},
-         pending: MapSet.new()
-       }}
+  def init(_) do
+    # (public: a page's process writes its own visitor's, ghost/2)
+    :ets.new(@ghosts, [:named_table, :public, read_concurrency: true])
+    Process.send_after(self(), :forget_ghosts, @forget_ghosts_every)
+
+    {:ok,
+     %{
+       next: 1,
+       messages: :queue.new(),
+       count: 0,
+       cards: %{},
+       rooms: %{},
+       told: %{},
+       pending: MapSet.new()
+     }}
+  end
 
   @impl true
   def handle_call(:history, _from, state),
@@ -176,6 +228,13 @@ defmodule Signalling.Chat do
     if MapSet.member?(state.pending, code),
       do: {:noreply, tell(state, code)},
       else: {:noreply, state}
+  end
+
+  # ghosts whose day is over
+  def handle_info(:forget_ghosts, state) do
+    :ets.select_delete(@ghosts, [{{:_, :"$1"}, [{:"=<", :"$1", now_ms()}], [true]}])
+    Process.send_after(self(), :forget_ghosts, @forget_ghosts_every)
+    {:noreply, state}
   end
 
   def handle_info(_, state), do: {:noreply, state}

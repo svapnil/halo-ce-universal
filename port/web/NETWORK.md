@@ -36,8 +36,9 @@ Status:
   server (refer to "Removing the Worker's rooms").
 - To do, perhaps: the lobby's chat kept in a Postgres database, so that its
   history outlasts a restart of the server (refer to "The lobby's chat").
-- To do: moderation for the lobby's chat: it has length and rate limits, and
-  blocked words, but no mute, report or ban (refer to "The lobby's chat").
+- To do: moderation for the lobby's chat: it has length and rate limits,
+  blocked words, and ghosts for repeated messages, but no mute, report or
+  ban by hand (refer to "The lobby's chat").
 - To do: Halo Custom Edition maps, which the desktop builds run since
   2026-10-07 and the browser build refuses (row 20 of "How it differs from
   upstream's"; what it would take: `README.md`, "No Custom Edition maps").
@@ -813,8 +814,9 @@ upright.
   `{"type": "chat", "id", "name", "color", "text", "at"}` for each,
   `{"type": "typing", "count"}` as it connects and as it changes, and
   `{"type": "error", "code": "busy"}` for a message refused. A name is at
-  most 11 characters, a message 200; control characters are spaces. An
-  address says at most 20 a minute.
+  most 11 characters, a message 200; control characters are spaces, and a
+  letter keeps at most 2 combining marks (Zalgo text, a letter under dozens,
+  draws over the lines around it). An address says at most 20 a minute.
 - **Typing.** A line under the list says how many others type: "Someone is
   typing…", "3 people are typing…". Never who: a name would carry what the
   blocked words keep from the others. A page says `typing` at most every 3
@@ -834,6 +836,13 @@ upright.
   is matched only on its own (`=coon`, not `raccoon`), and one that is not,
   anywhere (`n i g g e r`). `mix test --no-start` checks the list against
   words it must let through.
+- **Ghosts.** A visitor whose page says the same message 4 times in a row
+  (exactly, after the limits above: `Chat.repeated/2`, counted by each of
+  its pages) is a ghost for a day: from the 4th on, its messages and cards
+  are told only to its own page, as a blocked word's, and its typing to
+  no one. By visitor id (`Signalling.Chat.Ghosts`, an ETS table), so a
+  reload or another tab is still a ghost; a cleared browser is not. In
+  memory: a restart forgets them. `fly logs` has each (`chat: ghosted`).
 - **The history** is the `Signalling.Chat` process's state (an Erlang
   `:queue`, not ETS): the last 50 messages, in memory only. A deploy, a
   crash or `fly_start.sh`'s restart forgets them, and the ids start again

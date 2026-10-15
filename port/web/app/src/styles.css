@@ -950,6 +950,8 @@ back. */
 	padding: 3px 0;
 	line-height: 20px;
 	overflow-wrap: anywhere;
+	/* (marks stacked on a letter draw no further than its own row) */
+	overflow: hidden;
 }
 
 .chat-empty {
