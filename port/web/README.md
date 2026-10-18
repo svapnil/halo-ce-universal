@@ -146,13 +146,17 @@ first touch on another) the page fills the window and shows touch controls
 over the picture (`app/src/TouchControls.jsx`): a stick to move with, the
 Xbox controller's buttons, and the pause menu's and the scoreboard's; the
 picture between them is the aim, which a finger dragged on it turns. In the
-menus a tap is a click, and the controls are the menus' (D-pad, A, B). The
-controls are a gamepad to the game (`src/web_touch.c`: an SDL virtual
-gamepad, which `xinput_sdl.c` takes up with the keyboard as port 0's), so
-Settings > Controls Setup changes what the buttons do, as a real
-controller's. The finger on the canvas is SDL's finger events, which
-`sdl_platform.c` takes as the menus' pointer and as the mouse's motion (so
-`input.mouse_sensitivity` applies). The game is played sideways: upright,
+menus and cinematics a tap is a click, and the controls are the menus'
+(D-pad, A, B). The game reads the controls as upstream's touch controls
+(`port/linux/src/touch_input.c`, through the shared words of
+`src/web_shared.h` that `app/src/touch.js` writes and `src/web_touch.c`
+reads): the stick moves the player, the swipe turns the view
+(`input.touch_aim_assist` helps it), the buttons are port 0's, so Settings >
+Controls Setup changes what they do, and each is named by what it does. The
+game says when to show which (in a game, or in the menus and cinematics),
+and `input.touch_controls` "off" hides them. A finger on the canvas in the
+menus is SDL's finger events, which `sdl_platform.c` takes as the menus'
+pointer. The game is played sideways: upright,
 the page says to turn the phone. Sideways, the page's bar is hidden behind
 the button in the top left corner (a status to read shows it for a while),
 and the chat is a drawer over the picture, from the bar's button (the bar
@@ -225,22 +229,22 @@ changed.
     The targets of that size are textures, in the GPU's memory and not the
     game's 4 GB: three of them (colour, depth, a copy), 8 MB each at
     1920x1080 and 33 MB each at 3840x2160. As the canvas changes size the
-    old ones are freed (`render_targets_release_screen`).
-  - of Video Setup's sizes, only RESOLUTION SCALING is the browser's:
-    ORIGINAL draws the Xbox's 640x480, scaled to the canvas (4:3, with bars
-    in the 16:9 box), which costs a slow GPU the least. RESOLUTION and
-    WINDOW SIZE are not shown: the page gives the display and the window
-    their sizes (`video_rows_show` in `port/linux/game/menu_functions.c`).
-  - ANTI-ALIASING offers Android's choices (OFF, FXAA, MSAA 2X and 4X):
-    the renderer is Android's (`GLES_RENDERER_UNITS`, with `xgpu_post.c`'s
-    passes), which has no SMAA or supersampling, and WebGL 2 often allows
-    no more than 4 samples. The menus are otherwise the desktop's, so
-    `menu_files.c` takes Android's row for this one (`web_android_rows`).
-  - each upload of streamed vertices or indices gets a buffer of its own
-    (`web_upload_buffer` in `d3d8_gl.c`). In ANGLE, `bufferSubData` into a
-    buffer that queued draws read copies the whole buffer first. With the
-    16 MB stream buffer and a hundred uploads a frame, that limited the
-    menu to approximately 14 frames a second.
+    old ones are freed (upstream's `render_targets_evict`).
+  - the settings screens' rows are upstream's for the web
+    (`platform="web"` in `tools/port_settings.py`, which `menu_files.c`
+    takes under `HALO_WEB`): of Video Setup's sizes, only RESOLUTION
+    SCALING (ORIGINAL draws the Xbox's 640x480, scaled to the canvas, which
+    costs a slow GPU the least); no RESOLUTION or WINDOW SIZE, as the page
+    gives the display and the window their sizes; ANTI-ALIASING with
+    Android's choices (OFF, FXAA, MSAA 2X and 4X), as the renderer is the
+    OpenGL ES one (`HALO_GLES`), with no SMAA or supersampling, and WebGL 2
+    often allows no more than 4 samples.
+  - each draw's uploads of streamed vertices or indices go into a buffer no
+    queued draw reads (upstream's `web_chunk_get` in `d3d8_gl.c`, which
+    replaced ours in the sync of 2026-10-18). In ANGLE, `bufferSubData`
+    into a buffer that queued draws read waits for them, or copies the
+    whole buffer first: with the 16 MB stream buffer and a hundred uploads
+    a frame, that limited the menu to approximately 14 frames a second.
   - shader programs are linked in the background
     (`KHR_parallel_shader_compile`; `program_get` in `d3d8_gl.c`). The
     game makes a program for each pair of vertex and pixel shader state
@@ -281,9 +285,9 @@ changed.
   Custom Edition maps need. To support them one day (decided 2026-10-07:
   later, not now): a place for the player's maps (the Origin Private File
   System, or an upload); the texture channel orders of Halo PC, which the
-  desktop builds sample with a GL texture swizzle that WebGL 2 lacks, so
-  the texels would be rearranged on the CPU as `swap_red_and_blue` does
-  (`xbox_textures.c`); the Custom Edition tag cache's address
+  desktop builds sample with a GL texture swizzle that WebGL 2 lacks, and
+  which `xbox_textures.c` rearranges on the CPU under `HALO_WEB` already
+  (upstream's, for mods); the Custom Edition tag cache's address
   (`0x40440000`) skipped by the heap as the Xbox window is
   (`xbox_memory.c`); and the larger window and cache, with
   `platform_contiguous_alloc` zeroing only pages that were used before
@@ -294,10 +298,11 @@ changed.
 
 WebAssembly compares the type of each call with the type of the function,
 and stops the program if they are different. x86 and AArch64 do not examine
-the types. A small number of calls in the game source have incorrect types.
-`tools/web_build.py` renames these calls in the units that make them
-(`WEB_GAME_RENAMES`) to functions in `port/web/src/web_game_shims.c`, which
-make the calls with the correct types. `include/halo_web_fixups.h` lets
+the types. A small number of calls in the game source had incorrect types. Upstream
+corrects them in the sources (each marked `port:`), as its own browser build
+needs it too; the fork's renames of them to shims went in the sync of
+2026-10-18. A new one is corrected the same way, in the source.
+`include/halo_web_fixups.h` lets
 `va_start` accept the game's `char *` argument lists. If the game stops with
 `RuntimeError: function signature mismatch` or `unreachable`, the cause is
 probably a call that is not yet in the list. The stack in the console shows

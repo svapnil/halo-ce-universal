@@ -92,6 +92,9 @@ in everyone's server browser: Create Game's PUBLIC; a private game is
 reached only by its invite. Going private makes a new invite, if the old one
 was listed */
 void p2p_set_hosting_public(int public);
+/* whether the game this machine hosts is listed in everyone's server
+browser (PUBLIC, and network.public_lobby): the text chat is off in one */
+int p2p_hosting_listed(void);
 /* the password of the game hosted for the internet (Server Setup's
 PASSWORD; NULL or empty: none): its listing lets only those who know it
 join from the server browser (its invite link still joins it). Setting or
@@ -143,6 +146,14 @@ struct p2p_listing
 	unsigned char signing_key[P2P_LISTING_SIGNING_KEY_SIZE];
 	unsigned char sealed_token[P2P_LISTING_SEALED_TOKEN_SIZE];
 };
+/* joins a public game the server browser found (p2p_join_invite with its
+invite), remembering its host: nonzero if it held an invite */
+int p2p_join_listing(const struct p2p_listing *listing);
+/* whether this machine is in the public game it joined from the server
+browser: the tunnel still reaches its host, and no other invite was joined
+since. Such a game has no text chat, whatever its host says
+(port/linux/game/network_chat.c) */
+int p2p_joined_listed_host(void);
 /* a copy of the public games found, in the order shown (the most players
 first; then those not failed, the open ones, by name); returns their count */
 int p2p_lobby_games(struct p2p_listing *games, int maximum_count);
@@ -179,5 +190,40 @@ void p2p_hardware_id_sanitize(char *destination, int size, const char *source);
 virtual address (network byte order): where its packets come from; 0 if
 it is no peer's */
 unsigned long p2p_peer_endpoint_address(unsigned long virtual_address);
+
+/* ---- map sharing between the players of a game (port/linux/game/map_share.c)
+
+The players of an internet game reach its host alone. To share a map they
+reach each other too: a host tells a player the key hash of another, which
+answers holders of the invite it joined with as its host does (only while
+answering), and the player asks it for a session as it asked the host. */
+
+enum
+{
+	/* the hash of a machine's public key, which reaches it */
+	P2P_PLAYER_KEY_HASH_SIZE = 16,
+	/* the port each machine takes the others' map sharing connections on:
+	its game listens there without hosting */
+	P2P_MAP_SHARE_PORT = 5153,
+};
+
+/* the identifier (6 bytes) and key hash of the internet play peer of this
+virtual address (network byte order): 0 if it is no peer's */
+int p2p_peer_key_hash(unsigned long virtual_address, unsigned char *identifier, unsigned char *key_hash);
+/* whether this machine, a player of an internet game (not its host),
+answers the game's other players: holders of the invite it joined with */
+void p2p_set_answering_players(int on);
+/* asks for a session with another player of the internet game this
+machine joined, whose key has this hash (as the game's host told), if there
+is none: nonzero if there is one, or it is asked for (for some seconds, or
+until reached; asked again, it is asked for anew) */
+int p2p_reach_player(const unsigned char *key_hash);
+/* whether the tunnel reaches the machine with this identifier, and the
+virtual address (network byte order) the game reaches it at */
+int p2p_peer_reached(const unsigned char *identifier, unsigned long *address);
+
+/* BLAKE2b with a 32-byte digest (Monocypher's): a map's pieces
+(map_share.c) */
+void p2p_blake2b_256(const void *data, unsigned long size, unsigned char *digest);
 
 #endif

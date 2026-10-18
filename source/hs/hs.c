@@ -2805,6 +2805,7 @@ symbols in this file:
 #include "networking/network_game_globals.h"
 #include "networking/network_game_manager.h"
 #include "networking/network_server_manager.h"
+#include "network_votekick.h" /* port: port/linux/game/network_votekick.c */
 #include "objects/damage.h"
 #include "objects/object_lights.h"
 #include "objects/scenery.h"
@@ -2840,6 +2841,9 @@ symbols in this file:
 #include "units/units.h"
 #include "units/vehicles.h"
 #include "coop_scripts.h" /* port: port/linux/game/coop_scripts.c */
+#ifdef HALO_PROFILE
+#include "profile_console.h" /* port: port/linux/game/profile_console.c */
+#endif
 
 /* ---------- constants */
 
@@ -3378,7 +3382,7 @@ typedef void (*hs_token_enumerator)(
 
 struct hs_function_table_storage
 {
-	struct hs_function_definition const *functions[418 + 2];
+	struct hs_function_definition const *functions[418 + 5];
 	struct profile_section profile;
 	hs_token_enumerator token_enumerators[18];
 };
@@ -11698,7 +11702,56 @@ static struct hs_function_definition const sv_end_game_definition=
 	0,
 };
 
-long const hs_function_table_count= 418 + 2;
+/* port: the mods' tags played over the map's on this machine
+(the main menu's Mods: port/linux/game/mods.c), at the console */
+void mods_reload(void);
+void mods_enable(boolean enabled);
+void mods_list(void);
+
+HS_EVALUATE_NO_ARGUMENTS(hs_mods_reload_evaluate, mods_reload)
+HS_EVALUATE_VOID_BOOLEAN(hs_mods_enable_evaluate, mods_enable)
+HS_EVALUATE_NO_ARGUMENTS(hs_mods_list_evaluate, mods_list)
+
+static struct hs_function_definition const mods_reload_definition=
+{
+	_hs_type_void,
+	0,
+	"mods_reload",
+	hs_macro_function_parse,
+	hs_mods_reload_evaluate,
+	"finds the mods again and reads their tag files again (all sounds stop if any changed).",
+	NULL,
+	0,
+};
+
+static struct hs_function_definition_with_1_parameter const mods_enable_definition=
+{
+	{
+		_hs_type_void,
+		0,
+		"mods_enable",
+		hs_macro_function_parse,
+		hs_mods_enable_evaluate,
+		"plays the mods' sounds, bitmaps, text and models, or (false) the map's own, until the map changes.",
+		NULL,
+		1,
+		{ _hs_type_boolean },
+	},
+};
+
+static struct hs_function_definition const mods_list_definition=
+{
+	_hs_type_void,
+	0,
+	"mods_list",
+	hs_macro_function_parse,
+	hs_mods_list_evaluate,
+	"lists the mods in the mods folder, and what they play on this map.",
+	NULL,
+	0,
+};
+
+long const hs_function_table_count= 418 + 5;
 
 struct hs_enum_definition const hs_enum_table[]=
 {
@@ -12132,6 +12185,9 @@ struct hs_function_table_storage hs_function_table=
 		&xbox_set_machine_name_definition.definition,
 		&sv_say_definition.definition,
 		&sv_end_game_definition,
+		&mods_reload_definition,
+		&mods_enable_definition.definition,
+		&mods_list_definition,
 	},
 	{
 		"hs_update",
@@ -12633,6 +12689,11 @@ static boolean const hs_function_allowed_in_maps[]=
 	/* Halo PC's, for Custom Edition maps */
 	TRUE, /* sv_say */
 	TRUE, /* sv_end_game: the host's */
+
+	/* the port's, for this machine's mods */
+	FALSE, /* mods_reload */
+	FALSE, /* mods_enable */
+	FALSE, /* mods_list */
 };
 typedef char verify_hs_function_allowed_in_maps_size[
 	NUMBEROF(hs_function_allowed_in_maps) == NUMBEROF(hs_function_table.functions) ? 1 : -1];
@@ -13440,10 +13501,13 @@ static boolean hs_rebuild_source(
 	struct file_reference source_files[8];
 	short source_file_count;
 	short source_file_index;
+	char *scripts_name;
 
 	tag_block_resize(&global_scenario_get()->hs_source_files, 0);
-	sprintf(scenario_path, "data\\%s", tag_get_name(global_scenario_index));
-	sprintf(strrchr(scenario_path, '\\') + 1, "scripts");
+	/* port: snprintf (a map's tag's name may be any length) */
+	snprintf(scenario_path, sizeof(scenario_path), "data\\%s", tag_get_name(global_scenario_index));
+	scripts_name = strrchr(scenario_path, '\\') + 1;
+	snprintf(scripts_name, sizeof(scenario_path) - (scripts_name - scenario_path), "scripts");
 	file_reference_create_from_path(
 		&global_scripts,
 		"data\\global_scripts.hsc",
@@ -13504,11 +13568,20 @@ void hs_node_gc(
 	return;
 }
 
+/* port: some multiplayer maps keep a copy of the place for each game type,
+with its own sky. The script's first switch_bsp is the copy for the type the
+host started. A later switch to another copy reloads the level every couple
+of seconds, so that request is ignored. Cleared for each map. */
+static short scripted_multiplayer_bsp = NONE;
+static boolean scripted_multiplayer_bsp_reported = FALSE;
+
 void hs_initialize_for_new_map(
 	void)
 {
 	struct scenario *scenario;
 
+	scripted_multiplayer_bsp = NONE;
+	scripted_multiplayer_bsp_reported = FALSE;
 	scenario = global_scenario_index != NONE ? global_scenario_get() : NULL;
 	hs_allocate();
 	if (scenario && scenario->hs_syntax_data.size)
@@ -14516,7 +14589,7 @@ static void player_effect_screen_fade_in_evaluate(
 		double value1 = arguments->value1;
 		double value2 = arguments->value2;
 
-#ifdef HALO_ANDROID
+#ifdef HALO_ARM64_GUEST
 		player_effect_screen_fade_in(*(real const *)&arguments->value0, (real)value1, (real)value2, arguments->value3);
 #else
 		player_effect_screen_fade_in(arguments->value0, value1, value2, arguments->value3);
@@ -14539,7 +14612,7 @@ static void player_effect_screen_fade_out_evaluate(
 		double value1 = arguments->value1;
 		double value2 = arguments->value2;
 
-#ifdef HALO_ANDROID
+#ifdef HALO_ARM64_GUEST
 		player_effect_screen_fade_out(*(real const *)&arguments->value0, (real)value1, (real)value2, arguments->value3);
 #else
 		player_effect_screen_fade_out(arguments->value0, value1, value2, arguments->value3);
@@ -14912,7 +14985,41 @@ HS_EVALUATE_VOID_FROM_ARGUMENTS(debug_player_teleport_evaluate, struct hs_argume
 HS_EVALUATE_VOID_STRING(main_set_map_name_evaluate, main_set_map_name)
 HS_EVALUATE_VOID_STRING(main_set_multiplayer_map_name_evaluate, main_set_multiplayer_map_name)
 HS_EVALUATE_VOID_UNSIGNED_SHORT(main_set_difficulty_evaluate, main_set_difficulty)
-HS_EVALUATE_VOID_FROM_ARGUMENTS(scenario_switch_structure_bsp_evaluate, struct hs_arguments_word, (scenario_switch_structure_bsp(arguments->value)))
+/* port: a campaign script still switches, and so does a player walking
+through a BSP trigger (main_switch_structure_bsp, not this). */
+static void scenario_switch_structure_bsp_evaluate(
+	short function_index,
+	long thread_index,
+	boolean initialize)
+{
+	struct hs_arguments_word const *arguments;
+	short structure_bsp_index;
+
+	arguments = (struct hs_arguments_word const *)hs_macro_function_evaluate(function_index, thread_index, initialize);
+	if (arguments)
+	{
+		structure_bsp_index = (short)arguments->value;
+		if (!game_engine_running() || global_structure_bsp_index_get() == NONE)
+		{
+			scripted_multiplayer_bsp = NONE;
+			scripted_multiplayer_bsp_reported = FALSE;
+			scenario_switch_structure_bsp(structure_bsp_index);
+		}
+		else if (scripted_multiplayer_bsp == NONE ||
+			scripted_multiplayer_bsp == structure_bsp_index)
+		{
+			scripted_multiplayer_bsp = structure_bsp_index;
+			scenario_switch_structure_bsp(structure_bsp_index);
+		}
+		else if (!scripted_multiplayer_bsp_reported)
+		{
+			scripted_multiplayer_bsp_reported = TRUE;
+			error(_error_silent, "switch_bsp from a script is ignored after the multiplayer game has chosen its bsp");
+		}
+		hs_return(thread_index, 0);
+	}
+	return;
+}
 HS_EVALUATE_VOID_STRING(main_crash_evaluate, main_crash)
 HS_EVALUATE_VOID_STRING(debug_dump_memory_for_file_evaluate, debug_dump_memory_for_file)
 HS_EVALUATE_VOID_STRING(profile_dump_to_file_evaluate, profile_dump_to_file)
@@ -15213,6 +15320,8 @@ static boolean hs_expression_changes_no_game(
 		"player0_look_yaw_rate", "player1_look_yaw_rate", "player2_look_yaw_rate", "player3_look_yaw_rate",
 		"player0_look_pitch_rate", "player1_look_pitch_rate", "player2_look_pitch_rate",
 		"player3_look_pitch_rate",
+		/* (a machine's mods are its own: mods.c) */
+		"mods_reload", "mods_enable", "mods_list",
 		"true", "false", "on", "off",
 	};
 	char const *character = expression;
@@ -15316,10 +15425,37 @@ static boolean hs_compile_and_evaluate_command(
 	char buffer[1024];
 	char expanded[1024];
 
+#ifdef HALO_PROFILE
+	/* port: the profiling build's commands change nothing of the game: a client
+	may give them, and they are no scripts */
+	if (profile_console_command(expression))
+		return TRUE;
+#endif
 	/* port: the co-op host's bringto, which brings every player to the host
 	(players.c; a client is told it is the host's) */
 	if (hs_host_player_command(expression, "bringto"))
 		return players_coop_bring_to_host();
+	/* port: the players' vote to kick a player ("votekick <player name>",
+	or the name's start: Tab completes it), on any machine of a network
+	game: the host counts (network_votekick.c) */
+	{
+		char const *text = hs_host_player_command(expression, "votekick");
+
+		if (text)
+		{
+			char name[64];
+			long length = 0;
+
+			while (*text == ' ' || *text == '\t' || *text == '"')
+				text++;
+			while (*text && *text != '"' && *text != ')' && length < (long)sizeof(name) - 1)
+				name[length++] = *text++;
+			while (length > 0 && (name[length - 1] == ' ' || name[length - 1] == '\t'))
+				length--;
+			name[length] = 0;
+			return network_votekick_player_named(name);
+		}
+	}
 	/* port: playing in another's game, the host decides the game: no
 	cheats, no game speed, nothing else a command changes of the game (the
 	game run each tick also puts back what was changed before joining,

@@ -391,6 +391,7 @@ symbols in this file:
 #include "networking/network_messages.h"
 #include "networking/network_server_manager.h"
 #include "text/unicode.h"
+#include "map_share.h" /* port: port/linux/game/map_share.c */
 
 /* ---------- constants */
 
@@ -1491,6 +1492,12 @@ boolean network_game_client_add_player(
 		0x530,
 		client && (local_player_index>=0) && (local_player_index<MAXIMUM_NUMBER_OF_LOCAL_PLAYERS));
 
+	/* port: not until the host's settings name the game's map, and a game
+	in progress whose map is being downloaded not until it is (map sharing:
+	port/linux/game/map_share.c); asked again each frame */
+	if (map_share_holds_players())
+		return TRUE;
+
 	/* port: the pregame screen asks each frame until the host's settings
 	have the player: once every half second, not each frame (the host
 	refused and logged each repeat) */
@@ -2341,7 +2348,8 @@ static boolean network_game_client_map_name_is_valid(
 {
 	/* (a scenario's tag path, of which the cache takes the name after the
 	last backslash: letters, digits and a few more, none that a path reads
-	otherwise) */
+	otherwise; the [ ] ( ) + that Custom Edition maps' names use, as in
+	[H2]_Lockout, too) */
 	char const *character;
 	char const *leaf;
 
@@ -2351,7 +2359,8 @@ static boolean network_game_client_map_name_is_valid(
 	{
 		if (!((*character >= 'a' && *character <= 'z') || (*character >= 'A' && *character <= 'Z') ||
 			(*character >= '0' && *character <= '9') || *character == '_' || *character == '-' ||
-			*character == '.' || *character == ' ' || *character == '\\'))
+			*character == '.' || *character == ' ' || *character == '\\' ||
+			*character == '[' || *character == ']' || *character == '(' || *character == ')' || *character == '+'))
 		{
 			return FALSE;
 		}
@@ -2360,6 +2369,22 @@ static boolean network_game_client_map_name_is_valid(
 		return FALSE;
 	leaf = strrchr(map_name, '\\');
 	leaf = leaf ? leaf + 1 : map_name;
+	/* port: and not one of Windows's devices (con, nul, com1...), whatever
+	follows it: maps\com1.map opens the serial port there */
+	{
+		static char const *const devices[] = { "con", "prn", "aux", "nul", "com", "lpt" };
+		long stem = (long)strcspn(leaf, ". ");
+		short device;
+
+		for (device = 0; device < (short)NUMBEROF(devices); device++)
+		{
+			if (!_strnicmp(leaf, devices[device], 3) &&
+				((device < 4 && stem == 3) || (device >= 4 && stem == 4 && leaf[3] >= '0' && leaf[3] <= '9')))
+			{
+				return FALSE;
+			}
+		}
+	}
 	return *leaf && leaf[strspn(leaf, ". ")] != 0;
 }
 

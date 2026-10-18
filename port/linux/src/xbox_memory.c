@@ -16,6 +16,12 @@ Xbox kernel does.
 Halo Custom Edition maps need the window their tag data is linked to,
 0x40440000, reserved the same way when the game.custom_edition setting is on
 (port/linux/game/custom_edition_cache.c).
+
+The browser build (HALO_WEB) has no pages to map or protect: WebAssembly's
+memory is one block, grown at start-up to reach past the window, which the C
+heap skips (__wrap_sbrk below; tools/web_build.py). A block is cleared when
+it is allocated, as fresh pages would be, and protection is only remembered.
+Custom Edition maps, whose window lies in the C heap there, do not run.
 */
 
 #include "platform.h"
@@ -27,7 +33,7 @@ Halo Custom Edition maps need the window their tag data is linked to,
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 #include <emscripten/heap.h>
 
 /* port/web/src/web_crash.c's */
@@ -62,7 +68,7 @@ static int protection_to_host(DWORD protect)
 __attribute__((constructor(101)))
 static void contiguous_arena_reserve(void)
 {
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 	/* WebAssembly memory is one flat array with no mappings: grow the
 	memory to reach past the window, so that the window is ordinary memory,
 	which the heap keeps out of by skipping it (__wrap_sbrk below;
@@ -100,7 +106,7 @@ static void contiguous_arena_reserve(void)
 #endif
 }
 
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 /* The heap skips the window. Emscripten's malloc (dlmalloc) takes its memory
 from sbrk, which the build wraps (tools/web_build.py, --wrap=sbrk): the first
 request that would reach into the window moves the heap's break to the
@@ -148,7 +154,7 @@ static void custom_edition_tag_cache_reserve(void)
 	void *wanted = (void *)CUSTOM_EDITION_TAG_CACHE_ADDRESS;
 	void *result;
 
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 	/* (the browser build runs no Custom Edition maps, and reading the
 	setting this early would write config.toml before web_main.c has put it
 	in the browser's storage, so the player's settings would be lost at the
@@ -255,7 +261,7 @@ void *platform_contiguous_alloc(unsigned long size, unsigned long alignment,
 
 	address = (void *)(PLATFORM_CONTIGUOUS_BASE + first * PAGE_SIZE_BYTES);
 	memory_watch_forget(address, count * PAGE_SIZE_BYTES);
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 	memset(address, 0, count * PAGE_SIZE_BYTES);
 #else
 	/* map fresh zeroed pages over the reservation */
@@ -285,7 +291,7 @@ void platform_contiguous_free(void *address)
 	if (count)
 	{
 		memory_watch_forget(address, count * PAGE_SIZE_BYTES);
-#ifndef __EMSCRIPTEN__
+#ifndef HALO_WEB
 		mmap(address, count * PAGE_SIZE_BYTES, PROT_NONE,
 			MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED, -1, 0);
 #endif
@@ -330,7 +336,7 @@ BOOL WINAPI VirtualProtect(LPVOID address, SIZE_T size, DWORD new_protect, PDWOR
 		*old_protect = platform_is_contiguous(address) ?
 			page_protection[(start - PLATFORM_CONTIGUOUS_BASE) / PAGE_SIZE_BYTES] : PAGE_READWRITE;
 	memory_watch_forget((void *)start, end - start);
-#ifndef __EMSCRIPTEN__ /* (no page protection: the protection is only recorded) */
+#ifndef HALO_WEB
 	if (mprotect((void *)start, end - start, protection_to_host(new_protect)) != 0)
 	{
 		platform_set_last_error_from_errno(errno);

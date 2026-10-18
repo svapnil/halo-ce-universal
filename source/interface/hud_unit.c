@@ -86,6 +86,7 @@ symbols in this file:
 #include "tag_files/tag_groups.h"
 #include "units/unit_definitions.h"
 #include "units/units.h"
+#include "network_chat.h" /* port: port/linux/game/network_chat.c */
 
 /* ---------- constants */
 
@@ -530,20 +531,46 @@ static void hud_update_unit_local_player(
 
 			if (hud_state->last_shield_vitality > unit->object.shield_vitality)
 			{
-				if (hud_state->fade_time < 0.0f || hud_state->fade_time > 1.0f)
-					hud_state->last_shield_hit_time = game_time_get();
+				real shield_drop = hud_state->last_shield_vitality - unit->object.shield_vitality;
 
-				if (game_time_get() - hud_state->last_shield_hit_time < 15)
+				/* port: the host drains an overshield by about 0.00074 a tick
+				and moves this meter's memory with it (hud_tick_shield). A
+				client does not drain shields. The lower value arrived as a
+				hit, so the meter flashed and the shield damage sound played
+				for the whole overshield. A small step from past full is that
+				drain (no more than about 25 ticks of it). A larger step is a
+				hit, and the meter still flashes. The step is closed here, so
+				one late packet cannot leave the meter a little behind and keep
+				the flash going, and a hit's flash already fading goes on
+				fading, as when the shield holds still. */
+				if (hud_state->last_shield_vitality > 1.0f && shield_drop <= 0.02f)
 				{
-					hud_state->fade_time = 0.0f;
+					hud_state->last_shield_vitality = unit->object.shield_vitality;
+					if (hud_state->fade_time > 0.0f)
+					{
+						hud_state->fade_time +=
+							(real)(game_time_get() - hud_state->last_shield_hit_time) *
+							(1.0f / TICKS_PER_SECOND);
+					}
+					hud_state->last_shield_hit_time = game_time_get();
 				}
 				else
 				{
-					hud_state->last_shield_vitality = unit->object.shield_vitality;
-					hud_state->fade_time +=
-						(real)(game_time_get() - hud_state->last_shield_hit_time) *
-						(1.0f / TICKS_PER_SECOND);
-					hud_state->last_shield_hit_time = game_time_get();
+					if (hud_state->fade_time < 0.0f || hud_state->fade_time > 1.0f)
+						hud_state->last_shield_hit_time = game_time_get();
+
+					if (game_time_get() - hud_state->last_shield_hit_time < 15)
+					{
+						hud_state->fade_time = 0.0f;
+					}
+					else
+					{
+						hud_state->last_shield_vitality = unit->object.shield_vitality;
+						hud_state->fade_time +=
+							(real)(game_time_get() - hud_state->last_shield_hit_time) *
+							(1.0f / TICKS_PER_SECOND);
+						hud_state->last_shield_hit_time = game_time_get();
+					}
 				}
 			}
 			else if (hud_state->last_shield_vitality < unit->object.shield_vitality)
@@ -607,8 +634,8 @@ void hud_render_damage_indicators(
 	{
 		struct hud_damage_indicators_definition *definition =
 			&hud_globals->damage_indicators;
-		real theta;
-		real_point2d screen_position;
+		real theta = 0.0f;
+		real_point2d screen_position = { 0 };
 		real scale = hud_globals_get_scale(local_player_count() > 1);
 		byte damage_indicators[NUMBER_OF_HUD_DAMAGE_INDICATOR_DIRECTIONS];
 		short direction;
@@ -671,10 +698,6 @@ void hud_render_damage_indicators(
 							render.camera.viewport_bounds.y1) / 2);
 					break;
 
-				/* theta and screen_position are left unassigned only by this default arm. Not reached unassigned: the
-				 * arm's assertion failure calls system_exit, which does not return in January
-				 * (0x47c960 jumps to halt_and_catch_fire 0x4f21c0, which loops or calls exit).
-				 * Source-policy approval pending (2026-09-27 audit). */
 				default:
 					match_assert(
 						"c:\\halo\\SOURCE\\interface\\hud_unit.c",
@@ -1113,6 +1136,8 @@ void hud_render_unit_interface(
 					struct hud_absolute_placement_definition absolute_placement;
 					short draw_flags = 0;
 					point2d corner;
+					/* port: its picture's left (NONE: none drawn) */
+					short motion_sensor_left = NONE;
 
 					absolute_placement.corner = _hud_anchor_bottom_left;
 					SET_FLAG(
@@ -1138,12 +1163,16 @@ void hud_render_unit_interface(
 
 					if (hud_definition->motion_sensor.background.interface_bitmap.index != NONE)
 					{
+						/* port: none, unless it is drawn (its bitmap can be missing) */
+						hud_draw_last_left = NONE;
 						hud_draw_static_element(
 							local_player_index,
 							&absolute_placement,
 							&hud_definition->motion_sensor.background,
 							draw_flags,
 							NONE);
+						/* port: where it is (the text chat goes above it) */
+						motion_sensor_left = hud_draw_last_left;
 					}
 					if (hud_definition->motion_sensor.foreground.interface_bitmap.index != NONE)
 					{
@@ -1167,6 +1196,14 @@ void hud_render_unit_interface(
 						local_player_index,
 						local_player_count() > 1,
 						&corner);
+					/* port: the text chat goes above it: the top of its circle, as
+					far above the blips' centre as the picture's left edge is left
+					of it (the picture is taller than the circle) */
+					if (motion_sensor_left != NONE)
+					{
+						network_chat_note_motion_sensor(local_player_index, motion_sensor_left,
+							(short)(corner.y - (corner.x - motion_sensor_left)));
+					}
 				}
 
 				{

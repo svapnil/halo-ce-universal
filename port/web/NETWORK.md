@@ -55,6 +55,16 @@ do (`AGENTS.md`, "Syncing with upstream") rather than taking either side.
 The fork's decisions are kept here, in a tracked file, because `AGENTS.md`
 is not in git. When a decision changes, update this list.
 
+Upstream has a browser build of its own since 2026-10-10 (network version
+26: its `port/web/site`, `HALO_WEB`), which makes the opposite choices for
+most of these rows: its page runs `p2p.c` itself, over WebRTC straight to
+desktop builds (`p2p_webrtc.c`), hosts for them, and lists its games on the
+brokers. The fork keeps its own (the owner's, 2026-10-18), compiled with
+upstream's `HALO_WEB` and `HALO_GLES` so that upstream's browser code in
+the shared sources applies, but for the internet play units, which are
+compiled as the desktop's (`tools/web_build.py`, `NATIVE_INTERNET_PLAY_UNITS`).
+The "Upstream" column below is upstream's desktop builds.
+
 | # | The browser build | Upstream (desktop builds) | Why | Where |
 | --- | --- | --- | --- | --- |
 | 1 | Browsers play each other over WebRTC data channels through Cloudflare Realtime SFU, in rooms on our signalling. | `p2p.c`'s tunnel: MQTT brokers, STUN, hole punching, KCP, its own encryption. | A page has no UDP or TCP sockets. DTLS encrypts the channels and SCTP makes them reliable, so KCP and the tunnel's encryption are not used. | `src/web_p2p.c`, `app/src/sfu_transport.js`, `signalling/` |
@@ -63,7 +73,7 @@ is not in git. When a decision changes, update this list.
 | 4 | A page joins desktop builds' games (by invite, Direct Link or the Server Browser) by running upstream's `p2p.c` unchanged, with its sockets lent by our relay on Fly.io. | Direct sockets. | The browser speaks the desktop's protocol exactly, so it keeps working as upstream changes it. | "Native games" |
 | 5 | A browser's room is listed in browsers' Server Browser only: every live room, first, as `[WEB] <name>`, from our signalling server (`GET /net/games`), never on the MQTT brokers or in a desktop build's Server Browser. Server Setup hides LISTING and PASSWORD, and `p2p_set_hosting_public` and `p2p_set_hosting_password` keep nothing; `p2p_set_game_listing` goes to our signalling server only (see 17). | Public lobbies, with a password since network version 20, listed through the brokers. | Desktop builds could not join a listed browser room (see 3). Browsers can, so they see them (the owner's, 2026-10-15), from the server that already has them for the chat's cards (19). | `menu_functions.c` (`server_settings_update`), `web_p2p.c`, `web_p2p_select.c`, "The browsers' games" |
 | 6 | A browser can join a desktop build's password-protected public game. The game's own text field asks for the password. | The same. | Matches upstream. | `web_p2p_select.c` (`p2p_listing_unlock`) |
-| 7 | A host starts its game alone, in any game type, and the players it invites join the game in progress. The first game of an internet host starts as soon as Server Setup's START GAME is pressed: no lobby, no countdown. After each game's scores the host is back in the lobby, as upstream, where the countdown (30 s) runs with the host alone or with any number of players in any game type, and the next game starts (the room stays open). | The game waits in the lobby for its minimum players (and teams), then counts down. Since network version 24 a host alone counts down too; with others there, the game type's minimum players and teams apply. | A friend opening an invite should be playing at once, and a room should be a game being played (decided 2026-10-06; the lobby between games was the owner's choice, over starting the next game on its own). On 2026-10-08 the owner took upstream's lone-host countdown for the games after the first, and kept the browser's rule that any number of players starts any game type (under upstream's a host alone could start a game type that the host and one friend could not). | `network_server_manager.c` (`server_ok_to_countdown`, `network_game_server_game_can_start`; upstream's `server_alone`), `menu_functions.c` (`server_start`, `web_host_start_update`), "The lobby" |
+| 7 | A host starts its game alone, in any game type, and the players it invites join the game in progress. The first game of an internet host starts as soon as Server Setup's START GAME is pressed: no lobby, no countdown. After each game's scores the host is back in the lobby, as upstream, where the countdown (30 s) runs with the host alone or with any number of players in any game type, and the next game starts (the room stays open). | The game waits in the lobby for its minimum players (and teams), then counts down. Since network version 24 a host alone counts down too; with others there, the game type's minimum players and teams apply. | A friend opening an invite should be playing at once, and a room should be a game being played (decided 2026-10-06; the lobby between games was the owner's choice, over starting the next game on its own). On 2026-10-08 the owner took upstream's lone-host countdown for the games after the first, and kept the browser's rule that any number of players starts any game type (under upstream's a host alone could start a game type that the host and one friend could not). Since 2026-10-18 a machine still joining (no player yet) does not stop the countdown either, as upstream's `2059b6ce`. | `network_server_manager.c` (`server_ok_to_countdown`, `network_game_server_game_can_start`; upstream's `server_alone`), `menu_functions.c` (`server_start`, `web_host_start_update`), "The lobby" |
 | 8 | A page opened with an invite (`#join=` or `#native=`) skips the menus. It joins the game in progress from the main menu, then opens the menus' lobby. | The player joins through the menus, or from the clipboard at start-up. | One click from an invite to playing. | `src/web_lobby.c`, `app/src/lobby.js` |
 | 9 | Create Game > Internet makes the room only when the game starts (Server Setup's START GAME), not when Server Setup opens, so Server Setup's INVITE LINK reads MADE WHEN THE GAME STARTS. The invite is then on the page (its toast and its bar) and in the lobby between games. No LAN games: Join Game > LAN and Create Game > LAN each show "LAN games are not supported in the browser. Create an Internet game and share its invite." and open nothing (decided 2026-10-06). | The server, and its invite, are made as Create Game opens, and Server Setup shows the invite. LAN games are hosted and found on the local network. | A room is a game being played, not one being set up. A browser has no local network: its games are internet games, through the rooms. (`?net=tabs`, the tests' pages of one browser, is not a LAN game of the menus.) | `menu_functions.c` (`multiplayer_host`, `server_start`: `p2p_set_hosting_allowed`; `web_lan_refused`), "The lobby" |
 | 10 | The clipboard is read only when the player presses PASTE LINK. `network.join_from_clipboard` is off. | The game reads the clipboard each time its window comes to the front, and joins an invite it finds there. | The browser asks the player's permission to read the clipboard; reading it unprompted would show that prompt for no reason. | `src/web_clipboard.c`, `app/src/game.js` |
@@ -77,6 +87,10 @@ is not in git. When a decision changes, update this list.
 | 18 | A game hosted in a browser takes at most 16 players on a multiplayer map, and 4 in co-op (Server Setup's MAXIMUM PLAYERS stops there, and says so; co-op starts at 4). The rooms take as many machines, a player to a page: 15 joiners and the host. | Up to 128 players; co-op starts at 16. | What a host sends grows with the square of the players: each joiner gets every player's state, and the host sends it to each joiner, from one player's home connection, all of it through the SFU on our bill ("Bandwidth and its cost"). At 16 players that is about 4 Mbit/s from the host and 2 GB an hour to pay for; at 32 it would be about 15 Mbit/s, which many hosts do not have, and 7 GB. Co-op sends far more for each player (its enemies): about 250 KiB a second, so 4 players. (Decided 2026-10-06, by the owner, after 32 and 8.) | `menu_functions.c` (`WEB_MAXIMUM_PLAYERS`, `server_settings_maximum_players_limit`, `web_maximum_players_help`), `Signalling.Room` (`@maximum_joiners`) |
 | 19 | Every game hosted in a browser is told the whole site's lobby chat as it starts: a card in the host's name ("started a game") with the game live (map, game type, players, the match's clock), a green Join that joins it, and "Game over" as its room ends. Its invite is then any visitor's. An invite pasted alone in the chat is such a card too ("shared a game"). The same games are in the menus' Server Browser (row 5). | Public games are listed in the Server Browser (LISTING: PUBLIC); a private one is reached only by its invite. | The owner's (2026-10-06): games are found in the lobby, and joined in a click. A browser game has no PRIVATE meanwhile (Server Setup has no LISTING in the browser: row 5). | "Game cards" |
 | 20 | A page cannot join a desktop build's game on a Halo Custom Edition map: it leaves with "This game is on `<map>`, a Halo Custom Edition map, which the browser can't play." Hosts name such maps `custom_maps\<name>` since network version 22. | A desktop build joins if it has the map in its `custom_maps` folder (`game.custom_edition`), and is told to copy it there if not. | The browser build runs no Custom Edition maps (decided 2026-10-07; supporting them is a to-do: `README.md`, "No Custom Edition maps"). | `custom_edition_cache.c` (`custom_edition_cache_present`) |
+| 21 | The in-game text chat (upstream's, network version 26) is on in every browser game: a browser's room is not "listed" (`p2p_hosting_listed` and `p2p_joined_listed_host` are 0 for rooms). A desktop build's game joined from the Server Browser has none, as for the desktop's players. | The text chat is off in a game listed in the Server Browser, for its host and for players who joined it from there. | The owner's (2026-10-18): browser games are found and joined in the lobby (row 19), and its players talk. The chat has upstream's streamer mode and mutes, but no moderation of ours. | `web_p2p.c`, `web_p2p_select.c` |
+| 22 | No voice chat sent from a browser (`audio.voice_chat` "off", a host's `network.voice_lobby` and `voice_mode` off), so the browser never asks for the microphone; others' voices in a desktop build's game still play. No map sharing (`network.map_download`, `map_seed`, `map_share` off). | Voice chat (push to talk) and map sharing are on. | Voice would ask for the microphone as a game starts, and a host's voices would go to every joiner through the SFU (row 18's budget); map sharing would fetch Custom Edition maps, which the browser does not play (row 20), through the relay. (2026-10-18.) | `app/src/game.js` (`window.ENV`) |
+| 23 | The touch controls are the page's (`app/src/TouchControls.jsx`): its layout, the menus' D-pad, A and B in the menus and cinematics, and the screen behind the buttons a swipe for the aim. They feed upstream's `touch_input.c` (the stick as the player's movement, the swipe as the look, `input.touch_aim_assist`, the buttons named by the profile's mapping) through upstream's shared words (`web_shared.h`, `web_touch.c`). | Upstream's browser build draws Android's layout (`site/touch.js`); its desktop builds have none. | The owner's (2026-10-18): upstream's aim with the page's controls. | `app/src/touch.js`, `src/web_touch.c` |
+| 24 | The game's main loop blocks, each frame suspended until the browser's next (JSPI): `main.c`'s `HALO_WEB` loop runs its frames in a loop of its own (`web_main_loop_run`, `web_main.c`). | Upstream's browser build returns to the browser after each frame (`emscripten_set_main_loop`), which needs no JSPI. | The owner's (2026-10-18): the frame wait, the frame statistics and the background tab's timer (row 16) are built on it. Taking upstream's would let browsers without JSPI play. | `tools/web_build.py` (`WEB_GAME_RENAMES`), `src/web_main.c` |
 
 If upstream changes any of these on its side, the browser build may need a
 matching change (in `web_p2p.c`, `web_p2p_select.c`, the relay or the page),
@@ -301,31 +315,28 @@ streams reliable, and DTLS encrypts every data channel.
 
 ## The game's side
 
-This repository takes changes from upstream, which has no browser build. So
-the browser's network code implements upstream's interfaces, and the web
-build chooses it. Upstream's files change only in a few places, each in
-`#ifdef __EMSCRIPTEN__`:
+This repository takes changes from upstream. The browser's network code
+implements upstream's interfaces, and the web build chooses it. Upstream's
+files change only in a few places, each in `#ifdef HALO_WEB` (upstream's
+own browser build's define, which ours compiles with):
 
 - `source/networking/network_server_manager.c`: a host starts its game
   alone (`server_ok_to_countdown`, `network_game_server_game_can_start`).
 - `port/linux/game/menu_functions.c`: an internet game's room is made, and
   its first game started, at Server Setup's START GAME (`multiplayer_host`,
   `server_start`, `web_host_start_update`; "The lobby").
-- `port/linux/game/menu_functions.c`: Video Setup shows neither RESOLUTION
-  nor WINDOW SIZE (`video_rows_show`; `port/web/README.md`), and Server
-  Setup neither LISTING nor PASSWORD (`server_settings_update`): a
-  browser's room is not listed in the server browser, so the two have
-  nothing to set.
-- `port/linux/src/menu_files.c`: Video Setup's ANTI-ALIASING is Android's
-  row (`web_android_rows`), as the browser draws as Android does
-  (`port/web/README.md`).
+- `port/linux/game/menu_functions.c`: Server Setup shows neither LISTING
+  nor PASSWORD (`server_settings_update`): a browser's room is not listed
+  in the server browser, so the two have nothing to set. (Video Setup's
+  rows for the browser are upstream's, `platform="web"`: `port/web/README.md`.)
 - `port/linux/src/sdl_platform.c`: the mouse is not captured at start-up
   (a page would lock it at the first click, in the menus), a hidden page
   plays on a 33 ms timer (`web_wait_for_frame`, the fork's own), and the
   game's fullscreen (F11, Settings) is the page's (`web_page_fullscreen`:
   the page's panels along, as its button does).
 - `source/main/main.c` is not changed: the web build renames its call of
-  `network_test_update` to `web_frame_update` (`WEB_GAME_RENAMES`); nor is
+  `network_test_update` to `web_frame_update`, and upstream's
+  `emscripten_set_main_loop` to `web_main_loop_run` (`WEB_GAME_RENAMES`); nor is
   `sdl_platform.c`'s clipboard used: the web build renames it out of the
   way (`WEB_PLATFORM_RENAMES`) for `src/web_clipboard.c`'s, on the page's
   thread.

@@ -9,7 +9,7 @@ mouse state gathered here feeds the controller emulation in xinput_sdl.c
 and the debug keyboard that the game's console reads.
 */
 
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 #include <emscripten.h>
 #include <emscripten/html5_webgl.h>
 #endif
@@ -18,7 +18,10 @@ and the debug keyboard that the game's console reads.
 #include "gl.h"
 #include "port_config.h"
 #include "p2p.h"
+#include "port_mods.h"
 #include "xiso.h"
+#include "touch_input.h"
+#include "../game/text_filter.h"
 
 #include <SDL3/SDL.h>
 #include <stdio.h>
@@ -37,6 +40,8 @@ static struct platform_input_state input_state;
 /* keys pressed since the last read, so a press and release between two
 reads still counts as a press (input injected on Android, or a slow frame) */
 static unsigned char keys_pressed[SDL_SCANCODE_COUNT];
+/* The bound Screenshot action requests capture at the next presentation. */
+static BOOL screenshot_requested;
 /* likewise the mouse buttons pressed since the last read, so that a click
 quicker than a frame still counts */
 static unsigned char mouse_buttons_pressed[PLATFORM_MOUSE_BUTTON_COUNT];
@@ -77,6 +82,16 @@ static Uint64 scoreboard_open_until_ms;
 static float scoreboard_wheel;
 static long scoreboard_notches;
 static long scoreboard_pages;
+#ifndef HALO_ANDROID
+/* the scoreboard's pointer (platform_scoreboard_pointer): while the game
+offers it (a network game's scoreboard is open), a right click frees the
+mouse, whose pointer then picks a player; its motion and clicks go to it,
+not to the aim and the triggers. Another right click, or the scoreboard
+closing, takes the mouse back for the aim. */
+static BOOL scoreboard_pointer_offered;
+static struct platform_ui_pointer scoreboard_pointer;
+#endif
+static BOOL scoreboard_pointer_active;
 
 /* debug keyboard queue */
 #define KEYSTROKE_QUEUE_SIZE 64
@@ -84,9 +99,17 @@ static struct platform_keystroke keystroke_queue[KEYSTROKE_QUEUE_SIZE];
 static unsigned long keystroke_head, keystroke_count;
 
 #ifndef HALO_ANDROID
+/* dsound_sdl.c's: the output device followed */
+void dsound_sdl_output_device_check(void);
 /* updater.c's: the desktop self-updater */
 void updater_start(void);
 void updater_poll(SDL_Window *window);
+static void screen_keyboard_update(void);
+#ifndef HALO_GLES
+/* the windows' icon, a PNG (tools/embed_assets.py, from port/assets/icon) */
+extern const unsigned int platform_window_icon[];
+extern const unsigned long platform_window_icon_size;
+#endif
 #endif
 
 BOOL platform_sdl_initialize(void)
@@ -110,10 +133,10 @@ BOOL platform_sdl_initialize(void)
 	SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 	SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1");
 #endif
-#if defined(HALO_ANDROID) || defined(__EMSCRIPTEN__)
+#if defined(HALO_ANDROID) || defined(HALO_WEB)
 	/* a finger on the screen is not the mouse (SDL would click where it
 	lands, and fire): on Android it does nothing; in the browser it is the
-	menus' pointer and the aim (its finger events, platform_pump_events) */
+	menus' pointer (its finger events, platform_pump_events) */
 	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 #endif
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS))
@@ -129,11 +152,15 @@ BOOL platform_sdl_initialize(void)
 	/* (a new version looked for meanwhile, updater_poll asking about it) */
 	updater_start();
 #endif
+	/* (the mods, and whether to play those that say they cannot be played
+	together, before the window opens: port_mods.c) */
+	port_mods_startup();
 	return TRUE;
 }
 
-#ifndef HALO_ANDROID
-/* ---------- first start without game data (xbox_files.c) */
+#if !defined(HALO_ANDROID) && !defined(HALO_WEB)
+/* ---------- first start without game data (xbox_files.c; the web page
+imports it itself) */
 
 struct data_extraction
 {
@@ -502,7 +529,7 @@ window opens, what it will be. FALSE where display.resolution_scaling is
 "original": the Xbox's 640x480, scaled to the window. */
 BOOL platform_screen_mode(long *width, long *height)
 {
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 	/* the browser: the canvas is the display, in the page and fullscreen
 	alike. The page gives it its shape (port/web/app/src/styles.css) and SDL
 	gives its drawing buffer the pixels of that shape on the player's
@@ -714,6 +741,73 @@ int platform_window_sizes(long *widths, long *heights, int maximum)
 }
 
 #endif
+
+/* ---------- audio devices (Settings > Audio: audio.output_device,
+audio.input_device) */
+
+#ifndef HALO_ANDROID
+int platform_audio_devices(int recording, char (*names)[PLATFORM_AUDIO_DEVICE_NAME_SIZE], int maximum)
+{
+	SDL_AudioDeviceID *devices;
+	int device_count = 0, count = 0, index;
+
+	if (maximum < 1 || !platform_sdl_initialize())
+		return 0;
+	devices = recording ? SDL_GetAudioRecordingDevices(&device_count) : SDL_GetAudioPlaybackDevices(&device_count);
+	for (index = 0; devices && index < device_count && count < maximum; index++)
+	{
+		const char *name = SDL_GetAudioDeviceName(devices[index]);
+
+		/* (a name a setting can hold, and a menu show: no "|", which
+		separates a spinner's values) */
+		if (!name || !name[0] || strchr(name, '|') || strlen(name) >= PLATFORM_AUDIO_DEVICE_NAME_SIZE)
+			continue;
+		snprintf(names[count++], PLATFORM_AUDIO_DEVICE_NAME_SIZE, "%s", name);
+	}
+	SDL_free(devices);
+	return count;
+}
+
+SDL_AudioDeviceID platform_audio_device(int recording, const char *name)
+{
+	SDL_AudioDeviceID *devices;
+	SDL_AudioDeviceID found = recording ? SDL_AUDIO_DEVICE_DEFAULT_RECORDING : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+	int device_count = 0, index;
+
+	if (!name || !name[0] || !strcmp(name, "default"))
+		return found;
+	devices = recording ? SDL_GetAudioRecordingDevices(&device_count) : SDL_GetAudioPlaybackDevices(&device_count);
+	for (index = 0; devices && index < device_count; index++)
+	{
+		const char *device_name = SDL_GetAudioDeviceName(devices[index]);
+
+		if (device_name && !strcmp(device_name, name))
+		{
+			found = devices[index];
+			break;
+		}
+	}
+	SDL_free(devices);
+	if (found == (recording ? SDL_AUDIO_DEVICE_DEFAULT_RECORDING : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK))
+		platform_log("audio: no %s device named \"%s\": the system's default", recording ? "input" : "output", name);
+	return found;
+}
+#else
+int platform_audio_devices(int recording, char (*names)[PLATFORM_AUDIO_DEVICE_NAME_SIZE], int maximum)
+{
+	(void)recording;
+	(void)names;
+	(void)maximum;
+	return 0;
+}
+
+SDL_AudioDeviceID platform_audio_device(int recording, const char *name)
+{
+	(void)name;
+	return recording ? SDL_AUDIO_DEVICE_DEFAULT_RECORDING : SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK;
+}
+#endif
+
 #ifndef HALO_ANDROID
 /* the window's size (platform_window_size_setting), as the window was made
 or last resized: platform_display_apply */
@@ -729,12 +823,12 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	if (!platform_sdl_initialize())
 		return FALSE;
 
-#if defined(__EMSCRIPTEN__)
+#if defined(HALO_WEB)
 	/* WebGL 2 */
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
-#elif defined(HALO_ANDROID)
+#elif defined(HALO_GLES)
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 2);
@@ -746,10 +840,10 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
 	SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 0);
-#ifdef __EMSCRIPTEN__
-	/* an opaque canvas: the back buffer's alpha (which the Xbox never shows,
-	and the game leaves at 0 in places) would otherwise make the page show
-	through the picture */
+#ifdef HALO_WEB
+	/* an opaque canvas: the game keeps scratch values in destination alpha,
+	which a page would otherwise blend the picture by (black, or the page's
+	colours through it) */
 	SDL_GL_SetAttribute(SDL_GL_ALPHA_SIZE, 0);
 #endif
 	if (config_boolean("debug.gl_debug"))
@@ -790,11 +884,23 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 		return FALSE;
 	}
 #ifndef HALO_ANDROID
+#ifndef HALO_GLES
+	/* the game's icon, which the desktop shows for the window (on Windows
+	also halo.exe's own, port/windows/halo.rc; a web page has its own) */
+	if (platform_window_icon_size)
+	{
+		SDL_Surface *icon = SDL_LoadPNG_IO(SDL_IOFromConstMem(platform_window_icon, platform_window_icon_size), true);
+
+		if (!icon || !SDL_SetWindowIcon(platform_window, icon))
+			platform_log("cannot set the window's icon: %s", SDL_GetError());
+		SDL_DestroySurface(icon);
+	}
+#endif
 	platform_fullscreen_requested = platform_fullscreen_setting();
 	platform_fullscreen_kind_apply();
 #endif
 	platform_gl_context = SDL_GL_CreateContext(platform_window);
-#ifdef HALO_ANDROID
+#ifdef HALO_GLES
 	/* ES 3.2 where the driver has it, otherwise the renderer makes do with
 	3.0 plus extensions */
 	if (!platform_gl_context)
@@ -818,13 +924,13 @@ BOOL platform_video_initialize(unsigned long width, unsigned long height)
 	/* (not in a page: a browser locks the pointer only at a click, so this
 	request would wait for the first one, and lock it in the menus, which
 	want it free, and over the page's panels) */
-#if !defined(HALO_ANDROID) && !defined(__EMSCRIPTEN__)
+#if !defined(HALO_ANDROID) && !defined(HALO_WEB)
 	platform_mouse_capture(TRUE);
 #endif
 	return TRUE;
 }
 
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 /* the browser build: the page's fullscreen, which takes the page's panels
 along (port/web/app/src/App.jsx: as its button does), not the canvas's
 alone. on: 1, 0, or -1 to switch. The page acts on it on the browser's
@@ -844,7 +950,7 @@ and borderless's resolution are taken up between frames
 (halo_screen_commit) */
 void platform_display_apply(void)
 {
-#if defined(__EMSCRIPTEN__)
+#if defined(HALO_WEB)
 	/* (the browser: Settings' fullscreen asks the page's, when it changes;
 	the page sizes the canvas) */
 	static int applied = -1;
@@ -880,7 +986,7 @@ void platform_display_apply(void)
 
 void platform_video_drawable_size(int *width, int *height)
 {
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 	/* the canvas's drawing buffer, which the page sizes (SDL's window size
 	need not be it) */
 	emscripten_webgl_get_drawing_buffer_size(emscripten_webgl_get_current_context(), width, height);
@@ -889,7 +995,7 @@ void platform_video_drawable_size(int *width, int *height)
 #endif
 }
 
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 /* The game runs on a worker, which shows what it drew on its canvas only
 when it returns to the browser's event loop: the game's own loop never does,
 so each frame suspends it (JSPI) until the browser's next frame
@@ -925,23 +1031,9 @@ EMSCRIPTEN_KEEPALIVE void web_reset_keyboard(void)
 	__atomic_store_n(&web_keyboard_reset_requested, 1, __ATOMIC_RELEASE);
 }
 
-/* The page's, as the game's canvas is clicked: whether the game wants the
-mouse (platform_mouse_capture). SDL asks the browser for the pointer lock
-again at a click once it is lost (Esc, another window), but from the game's
-thread, after the click's gesture has gone, and the browser refuses it: the
-page asks in the click itself. */
-static int web_mouse_captured;
-
-EMSCRIPTEN_KEEPALIVE int web_mouse_wants_capture(void)
-{
-	return __atomic_load_n(&web_mouse_captured, __ATOMIC_ACQUIRE);
-}
-
-/* port/web/src/web_touch.c's: the page's touch controls, a gamepad */
-void web_touch_pump(int menus);
 #endif
 
-#if !defined(HALO_ANDROID) && !defined(__EMSCRIPTEN__)
+#if !defined(HALO_ANDROID) && !defined(HALO_WEB)
 /* with vsync off, the time between frames display.max_fps asks for (0:
 twice the display's refresh rate), or 0 for no limit. A GPU never left idle
 can hang (Intel's Raptor Lake graphics, whose reset then takes the desktop
@@ -973,19 +1065,28 @@ static Uint64 frame_interval_ns(void)
 }
 
 #endif
+#ifdef HALO_WEB
+#include "web_shared.h"
+
+/* port/web/src/web_main.c's: the frames shown, which the page reads; and
+web_library.js's: a line for the page (2: an invite link to offer) */
+void web_frame_shown(void);
+void web_js_post(int kind, const char *text);
+#endif
 
 void platform_video_swap(void)
 {
-#if !defined(HALO_ANDROID) && !defined(__EMSCRIPTEN__)
+#if !defined(HALO_ANDROID) && !defined(HALO_WEB)
 	static Uint64 next_frame;
 	Uint64 interval, now;
 
 #endif
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 	web_stats_swap_begin();
 #endif
 	SDL_GL_SwapWindow(platform_window);
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
+	web_frame_shown();
 	web_stats_wait_begin();
 	web_stats_wait_end(web_wait_for_frame());
 #elif !defined(HALO_ANDROID)
@@ -1005,11 +1106,13 @@ void platform_video_swap(void)
 
 void platform_mouse_capture(BOOL capture)
 {
+#ifdef HALO_WEB
+	/* (for the page, which takes the pointer lock back on a click:
+	web_shared.h) */
+	__atomic_store_n(&web_shared[_web_mouse_wanted], capture ? 1 : 0, __ATOMIC_RELAXED);
+#endif
 	if (platform_window)
 		SDL_SetWindowRelativeMouseMode(platform_window, capture ? true : false);
-#ifdef __EMSCRIPTEN__
-	__atomic_store_n(&web_mouse_captured, platform_window && capture, __ATOMIC_RELEASE);
-#endif
 }
 
 /* ---------- keyboard translation */
@@ -1211,9 +1314,15 @@ static void platform_invite_clipboard(BOOL look)
 
 	if (invite)
 	{
+#ifdef HALO_WEB
+		/* (a page may write the clipboard only when it is clicked: the page
+		shows the link, with a button that copies it) */
+		web_js_post(2, invite);
+#else
 		SDL_SetClipboardText(invite);
 		snprintf(seen, sizeof(seen), "%s", invite);
 		platform_log("Internet play: the invite link is on the clipboard");
+#endif
 #ifdef HALO_ANDROID
 		SDL_ShowAndroidToast("Hosting: the invite link is on the clipboard", 1, -1, 0, 0);
 #endif
@@ -1258,8 +1367,84 @@ void platform_show_message(const char *title, const char *message)
 	pthread_mutex_lock(&platform_message_lock);
 	snprintf(platform_message_title, sizeof(platform_message_title), "%s", title);
 	snprintf(platform_message_text, sizeof(platform_message_text), "%s", message);
+	/* (streamer mode's words hidden here too: a map's or a mod's name) */
+	text_filter_utf8(platform_message_title);
+	text_filter_utf8(platform_message_text);
 	platform_message_pending = TRUE;
 	pthread_mutex_unlock(&platform_message_lock);
+}
+
+#ifdef HALO_WEB
+/* web_library.js's: the page asks, and writes the answer in web_shared's
+_web_answer */
+void web_js_ask(const char *title, const char *text, const char *labels);
+#endif
+
+int platform_ask(const char *title, const char *text, const char *const *labels, int count, int default_index)
+{
+	/* (streamer mode's words hidden here too: mods' names) */
+	static char shown_title[128];
+	static char shown_text[4096];
+	static char shown_labels[3][128];
+	const char *shown[3];
+	int index;
+#ifdef HALO_WEB
+	char joined[512] = "";
+#else
+	SDL_MessageBoxButtonData buttons[3];
+	SDL_MessageBoxData question;
+	int answer = -1;
+#endif
+
+	if (count > 3)
+		count = 3;
+	snprintf(shown_title, sizeof(shown_title), "%s", title);
+	snprintf(shown_text, sizeof(shown_text), "%s", text);
+	text_filter_utf8(shown_title);
+	text_filter_utf8(shown_text);
+	for (index = 0; index < count; index++)
+	{
+		snprintf(shown_labels[index], sizeof(shown_labels[index]), "%s", labels[index]);
+		text_filter_utf8(shown_labels[index]);
+		shown[index] = shown_labels[index];
+	}
+	title = shown_title;
+	text = shown_text;
+	labels = shown;
+#ifdef HALO_WEB
+	/* (the page's dialog: the game's thread waits for the player there, as
+	SDL's box would, which a page's worker cannot show) */
+	for (index = 0; index < count; index++)
+	{
+		size_t length = strlen(joined);
+
+		snprintf(joined + length, sizeof(joined) - length, "%s%s", index ? "\n" : "", labels[index]);
+	}
+	__atomic_store_n(&web_shared[_web_answer], -1, __ATOMIC_SEQ_CST);
+	web_js_ask(title, text, joined);
+	while (__atomic_load_n(&web_shared[_web_answer], __ATOMIC_SEQ_CST) < 0)
+		SDL_Delay(50);
+	(void)default_index;
+	return __atomic_load_n(&web_shared[_web_answer], __ATOMIC_SEQ_CST);
+#else
+	for (index = 0; index < count; index++)
+	{
+		buttons[index].flags = index == default_index ?
+			SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT | SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT : 0;
+		buttons[index].buttonID = index;
+		buttons[index].text = labels[index];
+	}
+	question.flags = SDL_MESSAGEBOX_WARNING;
+	question.window = NULL;
+	question.title = title;
+	question.message = text;
+	question.numbuttons = count;
+	question.buttons = buttons;
+	question.colorScheme = NULL;
+	if (!SDL_ShowMessageBox(&question, &answer))
+		return -1;
+	return answer;
+#endif
 }
 
 static void platform_show_pending_message(void)
@@ -1295,11 +1480,13 @@ static void platform_show_pending_message(void)
 /* ---------- events */
 
 /* quits as closing the window does, when the events are next read (the
-menus' Quit: port/linux/game/menu_functions.c); Android's menus have none,
-as the system closes its apps */
+menus' Quit: port/linux/game/menu_functions.c); on Android at once */
 void platform_request_quit(void)
 {
-#ifndef HALO_ANDROID
+#ifdef HALO_ANDROID
+	/* (the guest has no SDL_PushEvent: exit ends the process, host_exit) */
+	exit(EXIT_SUCCESS);
+#else
 	SDL_Event event;
 
 	memset(&event, 0, sizeof(event));
@@ -1307,6 +1494,52 @@ void platform_request_quit(void)
 	SDL_PushEvent(&event);
 #endif
 }
+
+#ifndef HALO_ANDROID
+/* (under input_lock, on the event thread) the scoreboard's pointer on: the
+mouse freed, at the window's middle, and nothing held for the triggers */
+static void scoreboard_pointer_start(void)
+{
+	int width, height;
+
+	scoreboard_pointer_active = TRUE;
+	memset(&scoreboard_pointer, 0, sizeof(scoreboard_pointer));
+	memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
+	memset(mouse_buttons_pressed, 0, sizeof(mouse_buttons_pressed));
+	input_state.mouse_dx = input_state.mouse_dy = 0.0f;
+	platform_mouse_capture(FALSE);
+	SDL_GetWindowSize(platform_window, &width, &height);
+	SDL_WarpMouseInWindow(platform_window, width * 0.5f, height * 0.5f);
+	scoreboard_pointer.x = width * 0.5f;
+	scoreboard_pointer.y = height * 0.5f;
+}
+
+/* ... off: the mouse the aim's again (unless freed: F12, or the menus) */
+static void scoreboard_pointer_stop(void)
+{
+	if (!scoreboard_pointer_active)
+		return;
+	scoreboard_pointer_active = FALSE;
+	memset(&scoreboard_pointer, 0, sizeof(scoreboard_pointer));
+	platform_mouse_capture(!input_state.mouse_released && !input_state.ui_pointer);
+}
+
+BOOL platform_scoreboard_pointer(BOOL offered, struct platform_ui_pointer *pointer)
+{
+	BOOL active;
+
+	pthread_mutex_lock(&input_lock);
+	scoreboard_pointer_offered = offered;
+	active = scoreboard_pointer_active && offered;
+	*pointer = scoreboard_pointer;
+	scoreboard_pointer.moved = FALSE;
+	scoreboard_pointer.left_clicks = 0;
+	scoreboard_pointer.right_clicks = 0;
+	scoreboard_pointer.wheel_steps = 0;
+	pthread_mutex_unlock(&input_lock);
+	return active;
+}
+#endif
 
 void platform_scoreboard_scroll(int open, long *notches, long *pages)
 {
@@ -1320,6 +1553,10 @@ void platform_scoreboard_scroll(int open, long *notches, long *pages)
 		scoreboard_pages = 0;
 	}
 	scoreboard_open_until_ms = open ? now + SCOREBOARD_OPEN_MS : 0;
+#ifndef HALO_ANDROID
+	if (!open)
+		scoreboard_pointer_offered = FALSE;
+#endif
 	if (notches)
 		*notches = scoreboard_notches;
 	if (pages)
@@ -1327,6 +1564,24 @@ void platform_scoreboard_scroll(int open, long *notches, long *pages)
 	scoreboard_notches = 0;
 	scoreboard_pages = 0;
 	pthread_mutex_unlock(&input_lock);
+}
+
+void platform_screenshot_request(void)
+{
+	pthread_mutex_lock(&input_lock);
+	screenshot_requested = TRUE;
+	pthread_mutex_unlock(&input_lock);
+}
+
+BOOL platform_screenshot_take_request(void)
+{
+	BOOL requested;
+
+	pthread_mutex_lock(&input_lock);
+	requested = screenshot_requested;
+	screenshot_requested = FALSE;
+	pthread_mutex_unlock(&input_lock);
+	return requested;
 }
 
 void platform_pump_events(void)
@@ -1354,15 +1609,12 @@ void platform_pump_events(void)
 	platform_show_pending_message();
 #ifndef HALO_ANDROID
 	updater_poll(platform_window);
-#endif
-#ifdef __EMSCRIPTEN__
-	/* the page's touch controls, before the pump: SDL takes their
-	gamepad's state up in it (and is told whether a menu is up, for the
-	controls the page shows) */
-	web_touch_pump(input_state.menus != FALSE);
+	/* (Settings > Audio's output device, as it changes: dsound_sdl.c) */
+	dsound_sdl_output_device_check();
+	screen_keyboard_update();
 #endif
 	pthread_mutex_lock(&input_lock);
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 	if (__atomic_exchange_n(&web_keyboard_reset_requested, 0, __ATOMIC_ACQUIRE))
 	{
 		/* (SDL's own state too, or the next press of a key it still holds
@@ -1370,6 +1622,14 @@ void platform_pump_events(void)
 		SDL_ResetKeyboard();
 		memset(input_state.keys, 0, sizeof(input_state.keys));
 		memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
+	}
+#endif
+#ifndef HALO_ANDROID
+	/* (the scoreboard closed, or no longer offering it: the pointer goes) */
+	if (scoreboard_pointer_active && (SDL_GetTicks() >= scoreboard_open_until_ms || !scoreboard_pointer_offered ||
+		input_state.ui_pointer))
+	{
+		scoreboard_pointer_stop();
 	}
 #endif
 	while (SDL_PollEvent(&event))
@@ -1408,14 +1668,15 @@ void platform_pump_events(void)
 			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F12)
 			{
 				input_state.mouse_released = !input_state.mouse_released;
-				platform_mouse_capture(!input_state.mouse_released && !input_state.ui_pointer);
+				platform_mouse_capture(!input_state.mouse_released && !input_state.ui_pointer &&
+					!scoreboard_pointer_active);
 			}
 #ifndef HALO_ANDROID
 			/* F11 switches between fullscreen and the window (SDL keeps the
 			window's size and place while fullscreen) */
 			if (event.key.down && !event.key.repeat && event.key.scancode == SDL_SCANCODE_F11)
 			{
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 				/* (the page's, as its fullscreen button) */
 				web_page_fullscreen(-1);
 #else
@@ -1426,6 +1687,13 @@ void platform_pump_events(void)
 			break;
 		case SDL_EVENT_MOUSE_MOTION:
 #ifndef HALO_ANDROID
+			if (scoreboard_pointer_active)
+			{
+				scoreboard_pointer.x = event.motion.x;
+				scoreboard_pointer.y = event.motion.y;
+				scoreboard_pointer.moved = TRUE;
+				break;
+			}
 			/* in the menus the mouse moves the pointer, not the view */
 			if (input_state.ui_pointer)
 			{
@@ -1457,6 +1725,26 @@ void platform_pump_events(void)
 				break;
 			}
 #ifndef HALO_ANDROID
+			/* the open scoreboard's pointer: a right click frees it (and
+			fires nothing), and another takes it back; its clicks pick */
+			if (!input_state.ui_pointer && SDL_GetTicks() < scoreboard_open_until_ms && scoreboard_pointer_offered &&
+				(scoreboard_pointer_active || (event.button.down && event.button.button == SDL_BUTTON_RIGHT)))
+			{
+				if (event.button.down && event.button.button == SDL_BUTTON_RIGHT)
+				{
+					if (scoreboard_pointer_active)
+						scoreboard_pointer_stop();
+					else
+						scoreboard_pointer_start();
+				}
+				else if (event.button.down && event.button.button == SDL_BUTTON_LEFT)
+				{
+					scoreboard_pointer.left_clicks++;
+					scoreboard_pointer.click_x = event.button.x;
+					scoreboard_pointer.click_y = event.button.y;
+				}
+				break;
+			}
 			/* clicks in the menus go to the pointer; a button held down
 			when the menu closes stays up until pressed again, so the click
 			that resumes the game does not also fire */
@@ -1532,24 +1820,64 @@ void platform_pump_events(void)
 			memset(input_state.mouse_buttons, 0, sizeof(input_state.mouse_buttons));
 			memset(mouse_buttons_pressed, 0, sizeof(mouse_buttons_pressed));
 			input_state.focused = FALSE;
+			/* (the scoreboard's pointer goes; the mouse is taken back for
+			the aim as the window has the focus again) */
+			scoreboard_pointer_active = FALSE;
+#ifdef HALO_ANDROID
+			touch_input_cancel();
+#endif
 			break;
 		case SDL_EVENT_WINDOW_FOCUS_GAINED:
 			input_state.focused = TRUE;
 			look_at_clipboard = TRUE;
 #ifndef HALO_ANDROID
-			if (!input_state.mouse_released && !input_state.ui_pointer)
+			if (!input_state.mouse_released && !input_state.ui_pointer && !scoreboard_pointer_active)
 				platform_mouse_capture(TRUE);
 #endif
 			break;
-		case SDL_EVENT_GAMEPAD_ADDED:
-			SDL_OpenGamepad(event.gdevice.which);
+#ifdef HALO_ANDROID
+		case SDL_EVENT_FINGER_DOWN:
+		case SDL_EVENT_FINGER_MOTION:
+		case SDL_EVENT_FINGER_UP:
+		case SDL_EVENT_FINGER_CANCELED:
+			touch_input_event(event.type, &event.tfinger);
 			break;
-#ifdef __EMSCRIPTEN__
-		/* a finger on the canvas (the page's touch controls take their own
-		touches: port/web/app/src/TouchControls.jsx). In the menus a tap is
-		the pointer put where the finger lands and clicked, and the finger
-		moves it; in the game the finger's motion is the mouse's, in the
-		display's pixels, for the aim (input.mouse_sensitivity applies) */
+#endif
+		case SDL_EVENT_GAMEPAD_ADDED:
+#ifdef HALO_ARM64_GUEST
+			/* (the guest reaches SDL only through host_imports.list, which
+			has no SDL_GetGamepadName) */
+			SDL_OpenGamepad(event.gdevice.which);
+#else
+			{
+				SDL_Gamepad *gamepad = SDL_OpenGamepad(event.gdevice.which);
+
+				/* (which pads the game drives: under Steam Input, Steam's
+				virtual ones, named for the controllers behind them) */
+				if (gamepad)
+				{
+					const char *name = SDL_GetGamepadName(gamepad);
+
+					platform_log("gamepad: %s", name ? name : "(unnamed)");
+				}
+			}
+#endif
+			break;
+		case SDL_EVENT_GAMEPAD_REMOVED:
+			/* (SDL keeps a gamepad open until it is closed, even once the
+			controller has gone) */
+			{
+				SDL_Gamepad *gamepad = SDL_GetGamepadFromID(event.gdevice.which);
+
+				if (gamepad)
+					SDL_CloseGamepad(gamepad);
+			}
+			break;
+#ifdef HALO_WEB
+		/* a finger on the canvas in the menus: the pointer put where it
+		lands and clicked, and the finger moves it. (In a game the page's
+		touch controls take the fingers, the view's swipes among them:
+		port/web/app/src/TouchControls.jsx, touch_input.c) */
 		case SDL_EVENT_FINGER_DOWN:
 		case SDL_EVENT_FINGER_MOTION:
 		{
@@ -1567,12 +1895,6 @@ void platform_pump_events(void)
 					ui_pointer.click_x = ui_pointer.x;
 					ui_pointer.click_y = ui_pointer.y;
 				}
-			}
-			else if (event.type == SDL_EVENT_FINGER_MOTION)
-			{
-				SDL_GetWindowSizeInPixels(platform_window, &width, &height);
-				input_state.mouse_dx += event.tfinger.dx * width;
-				input_state.mouse_dy += event.tfinger.dy * height;
 			}
 			break;
 		}
@@ -1671,6 +1993,117 @@ BOOL platform_ui_pointer_read(struct platform_ui_pointer *pointer)
 void platform_video_window_size(int *width, int *height)
 {
 	SDL_GetWindowSize(platform_window, width, height);
+}
+
+/* ---------- the system's on-screen keyboard */
+
+/* A menu's text field is typed into (platform_text_field, xinput_sdl.c).
+Where Steam's on-screen keyboard is there to bring up (in Big Picture and in
+the Steam Deck's Game Mode, which ask for it with
+SDL_ENABLE_STEAM_SCREEN_KEYBOARD), SDL's text input runs while the field is
+typed into: the keyboard comes up with the field and goes with it, and what
+it types arrives as keys. Elsewhere text input stays off, as before, so that
+no input method takes the keys the field reads: a Wayland touch screen's
+keyboard (text-input-v3) would type text events, which the field does not
+read. */
+static SDL_AtomicInt screen_keyboard_wanted;
+/* (each field begun, which brings the keyboard up again: Steam does not say
+when its keyboard goes, by its own Enter or closed by hand, so SDL holds it
+to be up still; after a field ended and another begun in the same frame, as
+the password screen's is after a wrong password, it would not come back) */
+static SDL_AtomicInt screen_keyboard_requests;
+
+void platform_screen_keyboard(BOOL show, BOOL password)
+{
+	SDL_SetAtomicInt(&screen_keyboard_wanted, !show ? 0 : password ? 2 : 1);
+	if (show)
+		SDL_AddAtomicInt(&screen_keyboard_requests, 1);
+}
+
+/* (on the window's thread, as SDL asks: platform_pump_events) */
+static void screen_keyboard_update(void)
+{
+	/* (a keyboard shown again is closed first, as SDL opens none that it
+	holds to be up, and opened a moment later: Steam takes each as a URL,
+	steam://close/keyboard then steam://open/keyboard, which must not
+	arrive the other way round) */
+	enum { REOPEN_DELAY_MS = 500 };
+	static int requests_handled;
+	static Uint64 open_time;
+	int requests = SDL_GetAtomicInt(&screen_keyboard_requests);
+	int wanted = SDL_GetAtomicInt(&screen_keyboard_wanted);
+
+	if (!wanted)
+	{
+		open_time = 0;
+		if (SDL_TextInputActive(platform_window))
+			SDL_StopTextInput(platform_window);
+		return;
+	}
+	if (requests != requests_handled)
+	{
+		requests_handled = requests;
+		if (!SDL_HasScreenKeyboardSupport() ||
+			!SDL_GetHintBoolean(SDL_HINT_ENABLE_STEAM_SCREEN_KEYBOARD, false))
+		{
+			return;
+		}
+		open_time = SDL_GetTicks();
+		if (SDL_TextInputActive(platform_window))
+		{
+			SDL_StopTextInput(platform_window);
+			open_time += REOPEN_DELAY_MS;
+		}
+	}
+	if (open_time && SDL_GetTicks() >= open_time)
+	{
+		/* one line: the keyboard's Enter ends the field (and Steam's
+		keyboard goes with it); a password's, for the keyboards that hide
+		what is typed into one */
+		SDL_PropertiesID properties = SDL_CreateProperties();
+
+		open_time = 0;
+		platform_log("text field: showing the on-screen keyboard");
+		SDL_SetBooleanProperty(properties, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, false);
+		SDL_SetNumberProperty(properties, SDL_PROP_TEXTINPUT_TYPE_NUMBER,
+			wanted == 2 ? SDL_TEXTINPUT_TYPE_TEXT_PASSWORD_HIDDEN : SDL_TEXTINPUT_TYPE_TEXT);
+		SDL_StartTextInputWithProperties(platform_window, properties);
+		SDL_DestroyProperties(properties);
+	}
+}
+
+#else
+/* ---------- the menus' pointer (the touchscreen)
+
+While a menu is up, taps and drags go to the menus (touch_input.c,
+halo_ui_pointer_update in d3d8_gl.c). */
+void platform_ui_pointer_set_active(BOOL active)
+{
+	pthread_mutex_lock(&input_lock);
+	if ((active != FALSE) != (input_state.ui_pointer != FALSE))
+	{
+		input_state.ui_pointer = active;
+		touch_input_menu_set_active(active != FALSE);
+	}
+	pthread_mutex_unlock(&input_lock);
+}
+
+BOOL platform_ui_pointer_read(struct platform_ui_pointer *pointer)
+{
+	BOOL active;
+
+	pthread_mutex_lock(&input_lock);
+	active = input_state.ui_pointer;
+	touch_input_menu_read(pointer);
+	pthread_mutex_unlock(&input_lock);
+	return active;
+}
+
+/* the window is its pixels on Android (no display scaling): touch_input.c
+scales the fingers' 0..1 by the drawable's size */
+void platform_video_window_size(int *width, int *height)
+{
+	platform_video_drawable_size(width, height);
 }
 
 #endif

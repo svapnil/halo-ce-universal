@@ -1932,6 +1932,63 @@ const char *p2p_take_clipboard_text(void)
 	return NULL;
 }
 
+/* A room is listed only in the browsers' Server Browser, as "[WEB]": not a
+game listed in everyone's (p2p_lobby.c), whose text chat is off, so neither
+the host's nor a player's from that Server Browser is (port/web/NETWORK.md,
+"How it differs from upstream's") */
+int p2p_hosting_listed(void)
+{
+	return 0;
+}
+
+int p2p_join_listing(const struct p2p_listing *listing)
+{
+	return p2p_join_invite(listing->invite);
+}
+
+int p2p_joined_listed_host(void)
+{
+	return 0;
+}
+
+/* ---------- map sharing's peers (map_share.c), which a browser does
+without: it plays no Custom Edition maps, and shares none
+(network.map_download, map_seed and map_share are off: port_config.c) */
+
+int p2p_peer_key_hash(unsigned long virtual_address, unsigned char *identifier, unsigned char *key_hash)
+{
+	(void)virtual_address;
+	(void)identifier;
+	(void)key_hash;
+	return 0;
+}
+
+void p2p_set_answering_players(int on)
+{
+	(void)on;
+}
+
+int p2p_reach_player(const unsigned char *key_hash)
+{
+	(void)key_hash;
+	return 0;
+}
+
+int p2p_peer_reached(const unsigned char *identifier, unsigned long *address)
+{
+	(void)identifier;
+	(void)address;
+	return 0;
+}
+
+/* (web_p2p_select.c has the desktop's, Monocypher's) */
+void p2p_blake2b_256(const void *data, unsigned long size, unsigned char *digest)
+{
+	(void)data;
+	(void)size;
+	memset(digest, 0, 32);
+}
+
 /* ---------- what players are known by */
 
 /* as p2p_discord.c's */

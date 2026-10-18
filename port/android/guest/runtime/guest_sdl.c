@@ -95,6 +95,31 @@ bool SDL_ShowSimpleMessageBox(SDL_MessageBoxFlags flags, const char *title, cons
 	return host_sdl_show_simple_message_box((unsigned int)flags, title, message) != 0;
 }
 
+/* (up to three buttons, their ids those of the guest's) */
+bool SDL_ShowMessageBox(const SDL_MessageBoxData *data, int *buttonid)
+{
+	const char *labels[3] = { NULL, NULL, NULL };
+	int default_index = -1;
+	int index;
+	int chosen;
+
+	if (!data || data->numbuttons < 1 || data->numbuttons > 3)
+		return false;
+	for (index = 0; index < data->numbuttons; index++)
+	{
+		labels[index] = data->buttons[index].text;
+		if (data->buttons[index].flags & SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT)
+			default_index = index;
+	}
+	chosen = host_sdl_show_message_box((unsigned int)data->flags, data->title, data->message, default_index,
+		labels[0], labels[1], labels[2]);
+	if (chosen < 0 || chosen >= data->numbuttons)
+		return false;
+	if (buttonid)
+		*buttonid = data->buttons[chosen].buttonID;
+	return true;
+}
+
 void SDL_Delay(Uint32 milliseconds)
 {
 	struct timespec duration;
@@ -216,6 +241,11 @@ bool SDL_RumbleGamepad(SDL_Gamepad *gamepad, Uint16 low, Uint16 high, Uint32 mil
 	return host_sdl_rumble_gamepad((unsigned int)gamepad, low, high, milliseconds) != 0;
 }
 
+void SDL_CloseGamepad(SDL_Gamepad *gamepad)
+{
+	host_sdl_close_gamepad((unsigned int)gamepad);
+}
+
 /* ---------- audio */
 
 SDL_AudioStream *SDL_OpenAudioDeviceStream(SDL_AudioDeviceID device, const SDL_AudioSpec *spec,
@@ -233,4 +263,19 @@ bool SDL_PutAudioStreamData(SDL_AudioStream *stream, const void *data, int lengt
 bool SDL_ResumeAudioStreamDevice(SDL_AudioStream *stream)
 {
 	return host_sdl_resume_audio_stream_device((unsigned int)stream) != 0;
+}
+
+int SDL_GetAudioStreamData(SDL_AudioStream *stream, void *data, int length)
+{
+	return host_sdl_get_audio_stream_data((unsigned int)stream, data, length);
+}
+
+int SDL_GetAudioStreamAvailable(SDL_AudioStream *stream)
+{
+	return host_sdl_get_audio_stream_available((unsigned int)stream);
+}
+
+void SDL_DestroyAudioStream(SDL_AudioStream *stream)
+{
+	host_sdl_destroy_audio_stream((unsigned int)stream);
 }

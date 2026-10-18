@@ -19,7 +19,7 @@ renderer can protect the pages again before the kernel writes them.
 
 #include "platform.h"
 
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 #include <string.h>
 
 /* WebAssembly has no page protection, so no write faults to count. A range
@@ -175,6 +175,11 @@ void memory_watch_forget(void *address, unsigned long size)
 {
 	(void)address;
 	(void)size;
+}
+
+/* (the frames are counted by memory_watch_frame_advance, at Present) */
+void memory_watch_begin_frame(void)
+{
 }
 
 #else
@@ -394,4 +399,8 @@ void memory_watch_forget(void *address, unsigned long size)
 	}
 }
 
-#endif /* __EMSCRIPTEN__ */
+/* page protection sees each write at once: nothing to do per frame */
+void memory_watch_begin_frame(void)
+{
+}
+#endif /* HALO_WEB */
