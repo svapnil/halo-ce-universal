@@ -51,9 +51,10 @@ Multiplayer in the browser is upstream's game and menus, but it does not
 always work the way the desktop builds do. Each difference below is a
 product decision the fork has made. During a merge from upstream, a change
 that touches one of them is a behavioural conflict: ask the owner what to
-do (`AGENTS.md`, "Syncing with upstream") rather than taking either side.
-The fork's decisions are kept here, in a tracked file, because `AGENTS.md`
-is not in git. When a decision changes, update this list.
+do (`CLAUDE.local.md`, "Syncing with upstream") rather than taking either side.
+The fork's decisions are kept here, in a tracked file, because the fork's
+notes for agents (`CLAUDE.local.md`; `AGENTS.md` is upstream's) are not in
+git. When a decision changes, update this list.
 
 Upstream has a browser build of its own since 2026-10-10 (network version
 26: its `port/web/site`, `HALO_WEB`), which makes the opposite choices for
