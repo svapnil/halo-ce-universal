@@ -29,6 +29,9 @@ Halo Custom Edition maps need the window their tag data is linked to,
 #include <unistd.h>
 #ifdef __EMSCRIPTEN__
 #include <emscripten/heap.h>
+
+/* port/web/src/web_crash.c's */
+void web_crash_no_memory(unsigned long needed_mb);
 #endif
 
 #define PAGE_SIZE_BYTES 0x1000UL
@@ -70,8 +73,14 @@ static void contiguous_arena_reserve(void)
 		(emscripten_get_heap_size() >= end || emscripten_resize_heap(end)))
 		arena_reserved = TRUE;
 	else
+	{
 		platform_log("cannot reserve the Xbox contiguous memory window (the memory is %lu MB, the heap reaches %p)",
 			(unsigned long)emscripten_get_heap_size() >> 20, sbrk(0));
+		/* the browser would not grow the memory that far (a phone's, or a
+		machine's with little): the game cannot run, and the page says so
+		(web_crash.c) */
+		web_crash_no_memory(end >> 20);
+	}
 #else
 	void *wanted = (void *)PLATFORM_CONTIGUOUS_BASE;
 	void *result = mmap(wanted, PLATFORM_CONTIGUOUS_SIZE, PROT_NONE,

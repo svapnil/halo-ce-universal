@@ -12,6 +12,11 @@ the game, since the game may be the thing that died.
 - context_lost: the browser took the WebGL context away. Where a desktop
   build's graphics driver failing takes the machine with it, a browser's
   takes only its GPU process, and the page's context.
+- no_memory: the browser would not grow the memory past the Xbox window
+  (xbox_memory.c), which the game needs: it is not started (web_main.c),
+  and the page says the device has too little memory. (Before, the game
+  went on without the window and trapped at its first frame, dividing by
+  the size of a back buffer it never got: 1,075 reports in two weeks.)
 - the heap: its size and limit, and what malloc holds and has free. The
   heap cannot grow past 4 GB (wasm32), and starts past the Xbox window
   (xbox_memory.c), so what is left to grow into is the memory the game
@@ -42,7 +47,7 @@ tests: it only stops the visitor's own game).
 enum
 {
 	CRASH_MAGIC = 0x43525348,
-	CRASH_VERSION = 1,
+	CRASH_VERSION = 2,
 	LOG_SIZE = 32 * 1024,
 	STACK_SIZE = 8192,
 };
@@ -76,6 +81,9 @@ struct web_crash_state
 	/* the browser took the game's WebGL context away (its GPU process
 	crashed, or the driver was reset): nothing is drawn from then on */
 	unsigned int context_lost;
+	/* MB: the memory the game needs and the browser would not give (0 when
+	it did): web_crash_no_memory */
+	unsigned int no_memory;
 	/* the bytes of debug.txt ever copied to log (a ring: the latest are at
 	log_written % LOG_SIZE, going back) */
 	unsigned int log_written;
@@ -217,6 +225,20 @@ void web_crash_frame(void)
 	test = __atomic_exchange_n(&state.test, _test_none, __ATOMIC_ACQ_REL);
 	if (test)
 		run_test(test);
+}
+
+/* xbox_memory.c's, at start-up (a constructor's, before the page's
+onRuntimeInitialized reads it): the browser would not grow the memory to
+needed_mb */
+void web_crash_no_memory(unsigned long needed_mb)
+{
+	__atomic_store_n(&state.no_memory, (unsigned int)needed_mb, __ATOMIC_RELEASE);
+}
+
+/* web_main.c's: whether the game can run */
+int web_crash_memory_missing(void)
+{
+	return __atomic_load_n(&state.no_memory, __ATOMIC_ACQUIRE) != 0;
 }
 
 /* web_main.c's: the game's main returned */

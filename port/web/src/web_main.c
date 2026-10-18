@@ -32,6 +32,7 @@ itself and drop the links: the first version of this file did.
 int halo_main(void);
 /* web_crash.c's */
 void web_crash_exited(int code);
+int web_crash_memory_missing(void);
 /* (sys/stat.h's: the game's include paths hide it) */
 int mkdir(const char *path, unsigned int mode);
 
@@ -173,6 +174,13 @@ int main(int argc, char **argv)
 {
 	(void)argc;
 	(void)argv;
+	/* (the browser would not give the memory the game needs: the page says
+	so, web_crash.c, and nothing is started or downloaded) */
+	if (web_crash_memory_missing())
+	{
+		printf("web: not enough memory for the game\n");
+		return 1;
+	}
 	if (!mount_maps())
 	{
 		printf("web: cannot mount the game data\n");

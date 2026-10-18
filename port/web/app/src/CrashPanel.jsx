@@ -15,6 +15,7 @@ const TITLES = {
 	hang: "The game stopped responding",
 	"context-lost": "The game lost its graphics",
 	exit: "The game was quit",
+	"no-memory": "Not enough memory",
 };
 
 export function CrashPanel() {
@@ -30,6 +31,8 @@ export function CrashPanel() {
 		return null;
 	}
 	const quit = stopped.kind === "exit";
+	/* (a device too small for the game, not its failing: crash.js) */
+	const memory = stopped.kind === "no-memory";
 	return (
 		<div className="overlay crash" role="alertdialog" aria-modal="true" aria-labelledby="crash-title"
 			onKeyDown={(event) => event.stopPropagation()} onKeyUp={(event) => event.stopPropagation()}>
@@ -37,13 +40,14 @@ export function CrashPanel() {
 				<h2 id="crash-title" className="panel-title">{TITLES[stopped.kind] || "The game stopped"}</h2>
 				<p className="panel-hint">
 					{quit ? "Reload the page to play again." :
+						memory ? `${stopped.message}. Closing other tabs and apps, then reloading, can help.` :
 						"A report of what happened was sent, to help fix it. Reload the page to play again: " +
 						"your profiles and settings are kept."}
 				</p>
-				{!quit && <p className="crash-detail">{stopped.message}</p>}
+				{!quit && !memory && <p className="crash-detail">{stopped.message}</p>}
 				<div className="crash-buttons">
 					<button type="button" className="primary-button" autoFocus onClick={() => location.reload()}>Reload</button>
-					{!quit && <button type="button" className="secondary-button" onClick={saveLog}>Save log</button>}
+					{!quit && !memory && <button type="button" className="secondary-button" onClick={saveLog}>Save log</button>}
 				</div>
 			</div>
 		</div>

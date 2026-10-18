@@ -78,6 +78,7 @@ shows a panel (`CrashPanel.jsx`) and sends a report:
 | `context-lost` | The WebGL context lost |
 | `killed` | Sent by the next visit: the page before ended without its `pagehide`. A journal of each session is kept in `localStorage` every 3 s for this |
 | `error` | An error of the page's own script (the game goes on) |
+| `no-memory` | The browser would not grow the game's memory past the Xbox window (about 2.3 GB: `xbox_memory.c`). The game is not started, and the panel says the device has too little memory: a device statistic, not a crash (before, the game went on and trapped dividing by zero at its first frame) |
 | `browser-crash` | Chrome's own report of a page it ended, with `reason` (`oom`, `unresponsive`): the Reporting API, which the site's `Reporting-Endpoints` header asks for |
 
 A report holds the build (the commit), the browser, the time played, the

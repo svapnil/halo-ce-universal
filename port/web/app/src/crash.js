@@ -19,6 +19,9 @@ What it reports:
 - "hang": the game's frames stopped while the page was in view;
 - "context-lost": the browser took the game's WebGL context away (its GPU
   process or the graphics driver failed);
+- "no-memory": the browser would not give the game the memory it needs
+  (src/web_crash.c), and the game was not started: a device too small for
+  it, not a crash;
 - "killed": found at the next visit. A journal of the session is kept in
   localStorage every few seconds; a page that ends in the usual way marks
   it ended (pagehide). A journal not so marked is a page that the browser
@@ -34,7 +37,7 @@ saves all of this as a file instead.
 */
 
 const MAGIC = 0x43525348;
-const VERSION = 1;
+const VERSION = 2;
 /* struct web_crash_state (web_crash.c) */
 const FRAMES = 8;
 const EXITED = 12;
@@ -45,8 +48,9 @@ const MALLOC_USED = 28;
 const MALLOC_FREE = 32;
 const TEST = 36;
 const CONTEXT_LOST = 40;
-const LOG_WRITTEN = 44;
-const LOG = 48;
+const NO_MEMORY = 44;
+const LOG_WRITTEN = 48;
+const LOG = 52;
 const LOG_SIZE = 32 * 1024;
 const TESTS = { abort: 1, trap: 2, hang: 3, oom: 4 };
 
@@ -141,6 +145,7 @@ function gameState() {
 		exited: view.getUint32(base + EXITED, true) !== 0,
 		exitCode: view.getInt32(base + EXIT_CODE, true),
 		contextLost: view.getUint32(base + CONTEXT_LOST, true) !== 0,
+		memoryNeededMB: view.getUint32(base + NO_MEMORY, true),
 		heapMB: megabytes(HEAP_SIZE),
 		heapMaximumMB: megabytes(HEAP_MAXIMUM),
 		mallocUsedMB: megabytes(MALLOC_USED),
@@ -346,6 +351,13 @@ export function watchGame(module) {
 	}
 	game = { base, view, bytes: new Uint8Array(module.HEAPU8.buffer), stack: module._web_crash_stack() };
 	module.onAbort = (what) => stop("exception", `abort: ${what}`, new Error().stack);
+
+	/* (before the game's main, which then does not start it: web_main.c) */
+	if (gameState().memoryNeededMB) {
+		stop("no-memory", "This device doesn't have enough memory for the game (it needs about " +
+			`${(gameState().memoryNeededMB * 1048576 / 1e9).toFixed(1)} GB)`);
+		return;
+	}
 
 	/* the frames: standing still, in view, the game hangs (or its thread
 	died without a word) */
