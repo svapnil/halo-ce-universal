@@ -70,6 +70,9 @@ Settings (the environment):
 	                      (port/web/signalling, on this machine): /net/rooms/,
 	                      /net/online and /net/games go there, so that the
 	                      two share an address
+	RELAY_STATS_TOKEN     with it, /stats goes to the signalling too, for a
+	                      request with "Authorization: Bearer <it>" (any
+	                      other gets 404); none if empty
 	RELAY_METRICS         the port of /metrics, the round trips for Prometheus
 	                      (on Fly.io, fly.toml's [metrics]; not the public
 	                      port's); none if empty
@@ -80,6 +83,7 @@ import (
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
@@ -122,6 +126,7 @@ var (
 	report       = setting("RELAY_REPORT", "") == "1"
 	signalling   = setting("RELAY_SIGNALLING", "")
 	metricsPort  = setting("RELAY_METRICS", "")
+	statsToken   = setting("RELAY_STATS_TOKEN", "")
 	// (as port/assets/network/brokers.txt, and port/linux/src/port_config.c's
 	// default for network.stun_servers)
 	brokers     = endpoints(setting("RELAY_BROKERS", "opence.milenko.org:1883,broker.emqx.io:1883,broker.hivemq.com:1883,test.mosquitto.org:1883"))
@@ -1300,6 +1305,18 @@ func main() {
 		// the browsers' games for the menus' Server Browser: a page asks
 		// every 5 seconds while it is open (a few KiB)
 		mux.Handle("/net/games", proxy)
+		// every room and its game (NETWORK.md, "The room's game"), with the
+		// token only: without it, as if there were no /stats
+		if statsToken != "" {
+			expected := []byte("Bearer " + statsToken)
+			mux.HandleFunc("GET /stats", func(response http.ResponseWriter, request *http.Request) {
+				if subtle.ConstantTimeCompare([]byte(request.Header.Get("Authorization")), expected) != 1 {
+					http.NotFound(response, request)
+					return
+				}
+				proxy.ServeHTTP(response, request)
+			})
+		}
 	}
 	if metricsPort != "" {
 		metrics := http.NewServeMux()

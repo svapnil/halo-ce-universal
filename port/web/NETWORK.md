@@ -752,10 +752,13 @@ come back and tell it again):
   machines (the host and its linked joiners; a split-screen machine is
   one, the game's `players` counts each player).
 - **`GET /stats`**, JSON: the time, the online count, and each room as
-  above (its code, not its secret). Only on the machine: the signalling
+  above (its code, not its secret). On the machine: the signalling
   listens on 127.0.0.1, and the relay passes `/net/rooms/`, `/net/online`
-  and `/net/games` on, not this
-  (`fly ssh console -C "curl -s localhost:8791/stats"`).
+  and `/net/games` on
+  (`fly ssh console -C "curl -s localhost:8791/stats"`). From outside, only
+  with the relay's `RELAY_STATS_TOKEN` (a Fly secret), as
+  `Authorization: Bearer <it>`. Without it, `/stats` is a 404, as if there
+  were none.
 - **What it is worth.** The host's page says it: a page changed by its
   player could say anything, within the server's checks (each field's type
   and size). Good for counting and watching, not for trusting.
