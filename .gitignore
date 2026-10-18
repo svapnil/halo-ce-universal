@@ -41,5 +41,6 @@ node_modules/
 # builds its own)
 port/web/relay/halo-web-relay
 
-# Notes for agents (local only)
-AGENTS.md
+# The fork's own notes for agents (local only; AGENTS.md is upstream's, and
+# tracked)
+CLAUDE.local.md

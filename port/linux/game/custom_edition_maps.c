@@ -15,10 +15,16 @@ A map's level name is custom_maps\<name> (CUSTOM_EDITION_LEVEL_NAME_PREFIX),
 which the cache loader reads from the custom maps folders alone: a map named
 as one of the game's own levels (a30.map, bloodgulch.map) is listed and
 played as itself. The game engine keeps 63 characters of a level name, so a
-map whose name is longer than 51 is skipped.
+map whose name is longer than 51 is skipped. A map keeps its name: a network
+game names it so, and says which version it is on by its hash (map_share.h).
+A downloaded map of a name another version has is named <name>_<hash>.map;
+the menus show it without the hash, with (2), (3) and so on after the first
+of the name. A map a build of before named for its hash has its name given
+back (map_share_map_found).
 
 Each map can have, beside it in its folder:
-- <name>.bmp, its picture (bmp_files.c). The middle is cropped to the
+- <name>.bmp, its picture (bmp_files.c; for a map named for its hash, a
+  picture named without the hash also does). The middle is cropped to the
   menus' picture shape. It is read the first time it is drawn, and freed
   when the maps are rescanned. Without one, the unknown level's picture
   is shown.
@@ -41,9 +47,12 @@ Each map can have, beside it in its folder:
 #include "bmp_files.h"
 #include "custom_edition_cache.h"
 #include "custom_edition_maps.h"
+#include "map_share.h"
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <xtl.h>
 
 /* ---------- constants */
 
@@ -116,7 +125,8 @@ struct custom_edition_map
 	/* saved_game_file_remember_last_used_multiplayer_map writes
 	MAXIMUM_FILENAME_LENGTH+1 characters of a level name */
 	char level_name[MAXIMUM_FILENAME_LENGTH + 1];
-	wchar_t display_name[MAXIMUM_MAP_NAME_LENGTH + 1];
+	/* (and room for a version's number, " (2)") */
+	wchar_t display_name[MAXIMUM_MAP_NAME_LENGTH + 8];
 	wchar_t description[MAXIMUM_DESCRIPTION_LENGTH + 1];
 	boolean picture_read;
 	struct bitmap_data *picture;
@@ -178,29 +188,31 @@ static void custom_edition_maps_forget(
 	return;
 }
 
-/* the map's index in stock_maps, or NONE */
+/* the map's index in stock_maps, or NONE (by its name without its hash) */
 static short stock_map_index(
 	char const *name)
 {
+	short length = map_share_name_base_length(name);
 	short index;
 
 	for (index = 0; index < NUMBEROF(stock_maps); index++)
 	{
-		if (!csstrcasecmp(name, stock_maps[index].file))
+		if ((short)csstrlen(stock_maps[index].file) == length && !_strnicmp(name, stock_maps[index].file, length))
 			return index;
 	}
 	return NONE;
 }
 
 /* A map's menu name: Halo PC's name for its own maps, otherwise the file
-name with underscores as spaces and words capitalized ("the_bay_of_pigs"
-becomes "The Bay Of Pigs"). */
+name (without a hash it ends in) with underscores as spaces and words
+capitalized ("the_bay_of_pigs" becomes "The Bay Of Pigs"). */
 static void display_name_make(
 	char const *name,
 	wchar_t *display_name)
 {
 	boolean word_start = TRUE;
 	short index = stock_map_index(name);
+	short length = map_share_name_base_length(name);
 
 	if (index != NONE)
 	{
@@ -208,7 +220,7 @@ static void display_name_make(
 		return;
 	}
 
-	for (index = 0; name[index]; index++)
+	for (index = 0; index < length; index++)
 	{
 		unsigned char character = (unsigned char)name[index];
 
@@ -243,6 +255,13 @@ static void custom_edition_map_description_read(
 
 	csprintf(path, "%s%s%s", map->folder, map->name, DESCRIPTION_EXTENSION);
 	stream = fopen(path, "rb");
+	/* (a map named for its hash: its description named without it too) */
+	if (!stream && map_share_name_hashed(map->name))
+	{
+		csprintf(path, "%s%.*s%s", map->folder, (int)map_share_name_base_length(map->name), map->name,
+			DESCRIPTION_EXTENSION);
+		stream = fopen(path, "rb");
+	}
 	if (stream)
 	{
 		text_size = (long)fread(text, 1, sizeof(text), stream);
@@ -371,6 +390,9 @@ static void custom_edition_map_add(
 	csprintf(map->level_name, "%s%s", CUSTOM_EDITION_LEVEL_NAME_PREFIX, name);
 	display_name_make(name, map->display_name);
 	custom_edition_map_description_read(map);
+	/* (named for its hash by a build of before: its name given back,
+	map_share_files.c) */
+	map_share_map_found(folder, name);
 
 	return;
 }
@@ -384,14 +406,57 @@ static int custom_edition_map_compare(
 		((struct custom_edition_map const *)second)->name);
 }
 
+/* Versions of a map listed (its name the same but for the hash a version's
+file name ends in, a download's beside another of its name): the first in
+the order the maps are sorted by name (the one of the name alone, which
+sorts before them) shown by its name, the others with (2), (3) and so on. */
+static void custom_edition_maps_tell_versions_apart(
+	struct custom_edition_map *maps,
+	short count)
+{
+	short index;
+
+	for (index = 0; index < count; index++)
+	{
+		struct custom_edition_map *map = &maps[index];
+		short length = map_share_name_base_length(map->name);
+		short number = 1;
+		short other;
+
+		if (!map_share_name_hashed(map->name))
+			continue;
+		for (other = 0; other < count; other++)
+		{
+			struct custom_edition_map const *version = &maps[other];
+
+			if (other == index || map_share_name_base_length(version->name) != length ||
+				_strnicmp(version->name, map->name, length))
+			{
+				continue;
+			}
+			if (other < index)
+				number++;
+		}
+		if (number > 1)
+		{
+			char suffix[8];
+			short end = 0;
+			short character;
+
+			while (map->display_name[end])
+				end++;
+			csprintf(suffix, " (%d)", (int)MIN(number, 999));
+			for (character = 0; suffix[character] && end + 1 < NUMBEROF(map->display_name); character++)
+				map->display_name[end++] = (wchar_t)suffix[character];
+			map->display_name[end] = 0;
+		}
+	}
+}
+
 static void custom_edition_maps_look_for(
 	void)
 {
 	struct custom_edition_maps_globals *globals = &custom_edition_maps_globals;
-	struct file_reference directory;
-	struct file_reference file;
-	char name[MAXIMUM_FILENAME_LENGTH + 1];
-	char extension[MAXIMUM_FILENAME_LENGTH + 1];
 	char const *folders[] = { CUSTOM_EDITION_MAP_DIRECTORY, CUSTOM_EDITION_INSTALL_MAP_DIRECTORY };
 	short folder_index;
 
@@ -405,20 +470,46 @@ static void custom_edition_maps_look_for(
 	/* the game's custom_maps first, so its copy wins */
 	for (folder_index = 0; folder_index < NUMBEROF(folders); folder_index++)
 	{
+		char pattern[MAXIMUM_FILENAME_LENGTH + 1];
+		WIN32_FIND_DATAA data;
+		HANDLE find;
+
 		/* (the install's only when there is one) */
 		if (folder_index && !custom_edition_install_present())
 			continue;
-		file_reference_create_from_path(&directory, folders[folder_index], TRUE);
-		find_files_start(0, &directory);
-		while (find_files_next(&file, NULL))
+		/* A folder is listed through a handle of its own, never with
+		find_files_start and find_files_next: those keep their place in one
+		global, and as the game starts a thread of the menus' deletes the
+		files of folders with them (perform_filesystem_initialization in
+		ui_widget.c, directory_create_or_delete_contents). A listing here at
+		the same time takes that one's place, and the thread then deletes
+		the files of this folder: the maps. */
+		csprintf(pattern, "%s*.*", folders[folder_index]);
+		find = FindFirstFileA(pattern, &data);
+		if (find == INVALID_HANDLE_VALUE)
+			continue;
+		do
 		{
-			file_reference_get_name(&file, FLAG(_name_filename_bit), name);
-			file_reference_get_name(&file, FLAG(_name_extension_bit), extension);
-			custom_edition_map_add(folders[folder_index], name, extension);
-		}
+			char name[sizeof(data.cFileName) + 1];
+			char *extension;
+
+			if (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+				continue;
+			csmemcpy(name, data.cFileName, sizeof(data.cFileName));
+			name[sizeof(data.cFileName)] = 0;
+			extension = strrchr(name, '.');
+			if (extension)
+			{
+				*extension++ = 0;
+				custom_edition_map_add(folders[folder_index], name, extension);
+			}
+		} while (FindNextFileA(find, &data));
+		CloseHandle(find);
 	}
 	qsort(globals->maps, globals->map_count, sizeof(globals->maps[0]), custom_edition_map_compare);
 	qsort(globals->campaigns, globals->campaign_count, sizeof(globals->campaigns[0]), custom_edition_map_compare);
+	custom_edition_maps_tell_versions_apart(globals->maps, globals->map_count);
+	custom_edition_maps_tell_versions_apart(globals->campaigns, globals->campaign_count);
 	error(_error_silent, "custom edition: %d multiplayer maps for the level list, %d campaign maps", globals->map_count,
 		globals->campaign_count);
 
@@ -440,6 +531,13 @@ static struct bitmap_data *custom_edition_map_picture_read(
 
 	csprintf(path, "%s%s%s", map->folder, map->name, PICTURE_EXTENSION);
 	stream = fopen(path, "rb");
+	/* (a map named for its hash: its picture named without it too) */
+	if (!stream && map_share_name_hashed(map->name))
+	{
+		csprintf(path, "%s%.*s%s", map->folder, (int)map_share_name_base_length(map->name), map->name,
+			PICTURE_EXTENSION);
+		stream = fopen(path, "rb");
+	}
 	if (!stream)
 	{
 		return NULL;
@@ -569,6 +667,8 @@ void custom_edition_maps_look_again(
 	void)
 {
 	custom_edition_maps_globals.looked_for = FALSE;
+	/* (a network game's map's file, found again) */
+	custom_edition_map_paths_forget();
 
 	return;
 }
@@ -587,6 +687,7 @@ short custom_edition_maps_display_index(
 {
 	struct custom_edition_maps_globals *globals = &custom_edition_maps_globals;
 	char const *name = tag_name_strip_path(level_name);
+	char path[MAP_SHARE_PATH_SIZE];
 	short map_index;
 
 	/* (only a custom_maps\ name is a CE map's; any other is the game's own,
@@ -600,6 +701,30 @@ short custom_edition_maps_display_index(
 	if (!globals->looked_for)
 	{
 		custom_edition_maps_look_for();
+	}
+	/* (the map by its file: a network game's of its version, which may be
+	one of another name, <name>_<hash>.map, shown with its number) */
+	if (custom_edition_map_file_path(level_name, path))
+	{
+		char const *file_name = tag_name_strip_path(path);
+		short length = (short)csstrlen(file_name) - (short)(sizeof(".map") - 1);
+
+		for (map_index = 0; length > 0 && map_index < globals->map_count; map_index++)
+		{
+			if ((short)csstrlen(globals->maps[map_index].name) == length &&
+				!_strnicmp(globals->maps[map_index].name, file_name, length))
+			{
+				return FIRST_DISPLAY_INDEX + map_index;
+			}
+		}
+		for (map_index = 0; length > 0 && map_index < globals->campaign_count; map_index++)
+		{
+			if ((short)csstrlen(globals->campaigns[map_index].name) == length &&
+				!_strnicmp(globals->campaigns[map_index].name, file_name, length))
+			{
+				return FIRST_CUSTOM_CAMPAIGN_DISPLAY_INDEX + map_index;
+			}
+		}
 	}
 	for (map_index = 0; map_index < globals->map_count; map_index++)
 	{

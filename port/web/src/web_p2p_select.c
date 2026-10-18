@@ -65,7 +65,15 @@ peers of one game get the same is too unlikely to guard against.
 	void prefix##_lobby_refresh(void); \
 	int prefix##_lobby_games(struct p2p_listing *games, int maximum_count); \
 	void prefix##_lobby_mark_failed(const unsigned char *identifier); \
-	int prefix##_listing_unlock(struct p2p_listing *listing, const char *password);
+	int prefix##_listing_unlock(struct p2p_listing *listing, const char *password); \
+	int prefix##_hosting_listed(void); \
+	int prefix##_join_listing(const struct p2p_listing *listing); \
+	int prefix##_joined_listed_host(void); \
+	int prefix##_peer_key_hash(unsigned long virtual_address, unsigned char *identifier, unsigned char *key_hash); \
+	void prefix##_set_answering_players(int on); \
+	int prefix##_reach_player(const unsigned char *key_hash); \
+	int prefix##_peer_reached(const unsigned char *identifier, unsigned long *address); \
+	void prefix##_blake2b_256(const void *data, unsigned long size, unsigned char *digest);
 
 P2P_BACKEND(p2p_web)
 P2P_BACKEND(p2p_native)
@@ -434,4 +442,60 @@ started) */
 int p2p_listing_unlock(struct p2p_listing *listing, const char *password)
 {
 	return p2p_native_listing_unlock(listing, password);
+}
+
+/* (the game this page hosts is a room: listed for browsers only) */
+int p2p_hosting_listed(void)
+{
+	return p2p_web_hosting_listed();
+}
+
+/* a desktop build's public game (the desktop's, started for it), or a
+browser's "[WEB]" one (a room) */
+int p2p_join_listing(const struct p2p_listing *listing)
+{
+	if (has_native_invite(listing->invite))
+	{
+		start_native();
+		return p2p_native_join_listing(listing);
+	}
+	return p2p_web_join_listing(listing);
+}
+
+/* (a desktop build's game joined from the Server Browser: its text chat is
+off, as for the desktop's players) */
+int p2p_joined_listed_host(void)
+{
+	return (native_running() && p2p_native_joined_listed_host()) || p2p_web_joined_listed_host();
+}
+
+/* ---- map sharing's peers: the desktop's (a browser shares no maps) */
+
+int p2p_peer_key_hash(unsigned long virtual_address, unsigned char *identifier, unsigned char *key_hash)
+{
+	return (native_running() && p2p_native_peer_key_hash(virtual_address, identifier, key_hash)) ||
+		p2p_web_peer_key_hash(virtual_address, identifier, key_hash);
+}
+
+void p2p_set_answering_players(int on)
+{
+	if (native_running())
+		p2p_native_set_answering_players(on);
+	p2p_web_set_answering_players(on);
+}
+
+int p2p_reach_player(const unsigned char *key_hash)
+{
+	return native_running() ? p2p_native_reach_player(key_hash) : p2p_web_reach_player(key_hash);
+}
+
+int p2p_peer_reached(const unsigned char *identifier, unsigned long *address)
+{
+	return (native_running() && p2p_native_peer_reached(identifier, address)) ||
+		p2p_web_peer_reached(identifier, address);
+}
+
+void p2p_blake2b_256(const void *data, unsigned long size, unsigned char *digest)
+{
+	p2p_native_blake2b_256(data, size, digest);
 }

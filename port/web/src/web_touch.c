@@ -1,111 +1,102 @@
 /*
 WEB_TOUCH.C
 
-The page's touch controls (app/src/TouchControls.jsx, app/src/touch.js) as a
-gamepad. The page writes what the player's fingers hold into a block of the
-game's memory (struct web_touch_state); on the game's thread, before each
-pump of the events (sdl_platform.c platform_pump_events), it goes into an
-SDL virtual gamepad, which xinput_sdl.c takes up with the keyboard as port
-0's (as it does the first real gamepad). The stick, the buttons and the
-triggers are SDL's own numbers (SDL_GamepadAxis, SDL_GamepadButton), which
-the page uses too, so there is no mapping here: the game sees an Xbox
-controller with its default layout (A jumps, the right trigger fires).
-
-The gamepad exists from the first touch on: a page with a mouse never has
-one. The other way, the game tells the page whether a menu is up, for the
-controls it shows (the menus' D-pad, A and B; else the game's).
-
-A finger on the canvas itself is not here: SDL's finger events, which
-sdl_platform.c takes as the menus' pointer and the aim.
+The on-screen touch controls between the page's overlay
+(port/web/app/src/TouchControls.jsx, touch.js) and the game, as port/android/host/host_touch.c
+has them on Android: the services touch_input.c asks of the host. The page
+writes its stick, buttons and swipes into the shared words (web_shared.h);
+the game reads them when it reads port 0's controller, and writes back
+whether a game is being played (the scene), the profile's button mapping and
+port 0's rumble.
 */
 
-#include <SDL3/SDL.h>
-#include <emscripten/emscripten.h>
-#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+#include <time.h>
 
-enum
+#include "web_shared.h"
+
+/* a press shorter than this still reaches the game, which reads the
+controller once a frame (host_touch.c's TOUCH_TAP_NS) */
+#define TOUCH_TAP_NS 60000000LL
+
+static int32_t presses_seen[WEB_TOUCH_INPUTS];
+static int64_t pressed_ns[WEB_TOUCH_INPUTS];
+
+static int64_t now_ns(void)
 {
-	TOUCH_MAGIC = 0x544F5543,
-	TOUCH_VERSION = 1,
-	/* the standard buttons: SDL_GAMEPAD_BUTTON_SOUTH to DPAD_RIGHT */
-	BUTTON_COUNT = SDL_GAMEPAD_BUTTON_DPAD_RIGHT + 1,
-};
+	struct timespec now;
 
-struct web_touch_state
-{
-	unsigned int magic;
-	unsigned int version;
-	/* the page's: 1 from its first touch */
-	unsigned int touched;
-	/* the left stick, SDL's way: -32767 to 32767, y down */
-	int stick_x, stick_y;
-	/* the buttons held: 1 << SDL_GamepadButton */
-	unsigned int buttons;
-	/* the triggers held: bit 0 the left, bit 1 the right */
-	unsigned int triggers;
-	/* the game's: 1 while a menu is up */
-	unsigned int menus;
-};
-
-static struct web_touch_state state = { TOUCH_MAGIC, TOUCH_VERSION };
-static SDL_Joystick *gamepad;
-
-/* the page's: where the state is */
-EMSCRIPTEN_KEEPALIVE struct web_touch_state *web_touch_state(void)
-{
-	return &state;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (int64_t)now.tv_sec * 1000000000LL + now.tv_nsec;
 }
 
-/* (every standard button and axis, in SDL's order: the virtual gamepad's
-button and axis numbers are then SDL_GamepadButton's and SDL_GamepadAxis's) */
-static void attach(void)
+/* the screen's edges the system keeps for its gestures: none a page knows */
+void host_gesture_insets(int *insets)
 {
-	SDL_VirtualJoystickDesc desc;
-	SDL_JoystickID id;
-
-	SDL_INIT_INTERFACE(&desc);
-	desc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
-	desc.naxes = SDL_GAMEPAD_AXIS_COUNT;
-	desc.nbuttons = BUTTON_COUNT;
-	desc.button_mask = (1u << BUTTON_COUNT) - 1;
-	desc.axis_mask = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1;
-	desc.name = "Touch controls";
-	id = SDL_AttachVirtualJoystick(&desc);
-	gamepad = id ? SDL_OpenJoystick(id) : NULL;
-	if (gamepad)
-		printf("web: the touch controls are a gamepad\n");
-	else
-		printf("web: cannot attach the touch controls: %s\n", SDL_GetError());
+	memset(insets, 0, 4 * sizeof(*insets));
 }
 
-void web_touch_pump(int menus)
+/* the overlay's controller state, with each press held for at least
+TOUCH_TAP_NS (a tap can go down and up between two reads) */
+void host_touch_read(int32_t *state)
 {
-	unsigned int buttons, triggers;
-	int button;
+	int64_t now = now_ns();
+	int input;
 
-	__atomic_store_n(&state.menus, menus ? 1u : 0u, __ATOMIC_RELEASE);
-	if (!__atomic_load_n(&state.touched, __ATOMIC_ACQUIRE))
-		return;
-	if (!gamepad)
+	for (input = 0; input < 7; input++)
+		state[input] = __atomic_load_n(&web_shared[_web_touch_state + input], __ATOMIC_RELAXED);
+	for (input = 0; input < WEB_TOUCH_INPUTS; input++)
 	{
-		attach();
-		if (!gamepad)
+		int32_t presses = __atomic_load_n(&web_shared[_web_touch_presses + input], __ATOMIC_RELAXED);
+
+		if (presses != presses_seen[input])
 		{
-			/* (not asked again) */
-			__atomic_store_n(&state.touched, 0u, __ATOMIC_RELEASE);
-			return;
+			presses_seen[input] = presses;
+			pressed_ns[input] = now;
+		}
+		if (pressed_ns[input] && now - pressed_ns[input] < TOUCH_TAP_NS)
+		{
+			if (input < 15)
+				state[6] |= 1 << input;
+			else if (!state[4 + input - 15])
+				state[4 + input - 15] = 32767;
 		}
 	}
-	SDL_SetJoystickVirtualAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX, (Sint16)__atomic_load_n(&state.stick_x, __ATOMIC_ACQUIRE));
-	SDL_SetJoystickVirtualAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY, (Sint16)__atomic_load_n(&state.stick_y, __ATOMIC_ACQUIRE));
-	buttons = __atomic_load_n(&state.buttons, __ATOMIC_ACQUIRE);
-	for (button = 0; button < BUTTON_COUNT; button++)
-		SDL_SetJoystickVirtualButton(gamepad, button, (buttons >> button) & 1u);
-	/* (a trigger's axis runs from the joystick's minimum, let go, to its
-	maximum, pulled) */
-	triggers = __atomic_load_n(&state.triggers, __ATOMIC_ACQUIRE);
-	SDL_SetJoystickVirtualAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER,
-		triggers & 1u ? SDL_JOYSTICK_AXIS_MAX : SDL_JOYSTICK_AXIS_MIN);
-	SDL_SetJoystickVirtualAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER,
-		triggers & 2u ? SDL_JOYSTICK_AXIS_MAX : SDL_JOYSTICK_AXIS_MIN);
+}
+
+/* the swipe, then the gyroscope's turn, since the last read, in the
+overlay's logical pixels with its sensitivity applied */
+void host_touch_look_read(float *delta)
+{
+	int index;
+
+	for (index = 0; index < 4; index++)
+		delta[index] = (float)__atomic_exchange_n(&web_shared[_web_touch_look + index], 0, __ATOMIC_RELAXED) / 256.0f;
+}
+
+/* port 0's motors, each 0..65535, as the phone's vibration (the page's
+navigator.vibrate) */
+void host_touch_rumble(unsigned int low, unsigned int high)
+{
+	unsigned int strength = low > high ? low : high;
+
+	__atomic_store_n(&web_shared[_web_touch_rumble], strength ? 64 + (int)(strength * 191u / 65535u) : 0,
+		__ATOMIC_RELAXED);
+}
+
+void host_touch_scene(int scene)
+{
+	__atomic_store_n(&web_shared[_web_touch_scene], scene, __ATOMIC_RELAXED);
+}
+
+/* the game control on each controller button (port/linux/game/touch_game.c),
+which name the overlay's buttons */
+void host_touch_bindings(const int32_t *controls)
+{
+	int index;
+
+	for (index = 0; index < 16; index++)
+		__atomic_store_n(&web_shared[_web_touch_bindings + index], controls[index], __ATOMIC_RELAXED);
+	__atomic_add_fetch(&web_shared[_web_touch_bindings_serial], 1, __ATOMIC_RELEASE);
 }

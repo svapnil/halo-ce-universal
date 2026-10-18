@@ -105,6 +105,11 @@ const char *platform_custom_edition_root(void);
 out of an Xbox disc image into destination (sdl_platform.c), and quits if
 the player declines; nonzero once destination has one */
 BOOL platform_offer_game_data(const char *destination);
+/* asks the player, in a box of its own that waits for the answer (before
+the window opens, or between frames), with `count` buttons (3 at most: Android's),
+`default_index` Enter's and Escape's: the index of the one chosen, or -1
+when it cannot ask */
+int platform_ask(const char *title, const char *text, const char *const *labels, int count, int default_index);
 const char *platform_save_root(void);
 
 /* ---------- contiguous ("physical") memory
@@ -114,7 +119,7 @@ that window at start-up and hands out page-granular blocks from it, so the
 physical/virtual arithmetic the game and Direct3D rely on keeps working. */
 
 #define PLATFORM_CONTIGUOUS_BASE 0x80000000UL
-#if defined(HALO_ANDROID) || defined(__EMSCRIPTEN__)
+#if defined(HALO_ARM64_GUEST) || defined(HALO_WEB)
 /* 128 MB, a development kit's: Android's guest image is linked just above
 the window (port/android/include/halo_android_abi.h), and the browser
 build's memory is 4 GB in all, its heap skipping the window
@@ -168,6 +173,10 @@ unsigned long memory_watch_serial(void);
 void memory_watch_prepare_write(void *address, unsigned long size);
 /* the range was remapped or reprotected: treat it as written and unwatched */
 void memory_watch_forget(void *address, unsigned long size);
+/* a new frame starts (Present): tracking that compares page contents
+(Android under ARM translation, host_watch_hash.h) hashes a page at most
+once a frame, so it sees a write in the next frame, not at once */
+void memory_watch_begin_frame(void);
 
 /* ---------- time */
 

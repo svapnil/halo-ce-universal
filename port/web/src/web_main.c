@@ -25,9 +25,12 @@ itself and drop the links: the first version of this file did.
 
 #include <emscripten/wasmfs.h>
 #include <emscripten/emscripten.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+
+#include "web_shared.h"
 
 int halo_main(void);
 /* web_crash.c's */
@@ -156,19 +159,99 @@ static void mount_saves(void)
 			printf("web: cannot link %s\n", link);
 	}
 	/* the settings too (port_config.c reads and writes config.toml in the
-	executable's folder, /: what the game's Settings change, the keys
-	among them, lasts) */
+	data root, HALO_DATA_ROOT under HALO_WEB: main): what the game's
+	Settings change, the keys among them, lasts */
 	{
 		FILE *file;
 
 		if ((file = fopen(WEB_PERSIST_ROOT "/config.toml", "ab")) != NULL)
 			fclose(file);
-		if (symlink(WEB_PERSIST_ROOT "/config.toml", "/config.toml") != 0)
-			printf("web: cannot link /config.toml\n");
+		if (symlink(WEB_PERSIST_ROOT "/config.toml", WEB_DATA_ROOT "/config.toml") != 0)
+			printf("web: cannot link " WEB_DATA_ROOT "/config.toml\n");
 	}
 	saves_persist = 1;
 	printf("web: the saves and settings are kept in the browser (OPFS), but for the map cache\n");
 }
+
+/* ---------- the page and the shared code (HALO_WEB)
+
+What upstream's browser code in the shared sources asks of its page (its
+port/web/src/web_main.c and web_library.js), this page's way. */
+
+/* the words of the game's memory the page reads and writes itself
+(web_shared.h): the touch controls (web_touch.c, app/src/touch.js), the
+frames shown, whether the game wants the mouse */
+volatile int32_t web_shared[WEB_SHARED_WORDS];
+
+EMSCRIPTEN_KEEPALIVE volatile int32_t *web_state(void)
+{
+	return web_shared;
+}
+
+/* sdl_platform.c's, at each frame shown */
+void web_frame_shown(void)
+{
+	__atomic_add_fetch(&web_shared[_web_frames_shown], 1, __ATOMIC_RELAXED);
+}
+
+/* The page's, as the game's canvas is clicked: whether the game wants the
+mouse (platform_mouse_capture's _web_mouse_wanted). SDL asks the browser for
+the pointer lock again at a click once it is lost (Esc, another window), but
+from the game's thread, after the click's gesture has gone, and the browser
+refuses it: the page asks in the click itself (App.jsx). */
+EMSCRIPTEN_KEEPALIVE int web_mouse_wants_capture(void)
+{
+	return __atomic_load_n(&web_shared[_web_mouse_wanted], __ATOMIC_RELAXED);
+}
+
+/* a line for the page (kind 0 a status, 1 a notice, 2 an invite link to
+offer, 3 a fatal error, 4 the game quits as the player asked): its log
+(game.js print), where the crash reports find it. The game's exits go
+through web_crash.c's web_exit already (tools/web_build.py), and the page's
+own invites are the rooms' (web_p2p.c). */
+void web_js_post(int kind, const char *text)
+{
+	printf("web: %s%s\n", kind == 3 ? "error: " : kind == 1 ? "notice: " : "", text);
+}
+
+/* a question for the player (sdl_platform.c's platform_ask: mods that cannot
+be played together, port_mods.c): the page's Module.haloAsk(title, text,
+labels, answer) where it has one, which writes the button chosen into
+web_shared's _web_answer; else the first button. (The page has no mods
+folder yet, so none asks.) */
+void web_js_ask(const char *title, const char *text, const char *labels)
+{
+	MAIN_THREAD_EM_ASM({
+		var answer = (index) => Atomics.store(HEAP32, ($3 >> 2) + $4, index);
+		if (Module.haloAsk) {
+			Module.haloAsk(UTF8ToString($0), UTF8ToString($1), UTF8ToString($2).split("\n"), answer);
+		} else {
+			answer(0);
+		}
+	}, title, text, labels, web_shared, _web_answer);
+}
+
+/* main.c's main loop under HALO_WEB, which hands each frame to the browser
+(emscripten_set_main_loop, renamed to these by tools/web_build.py): here the
+frames are run one after another, each suspended until the browser's next
+in platform_video_swap (JSPI), as the desktop's loop does */
+static volatile int main_loop_cancelled;
+
+void web_main_loop_run(em_callback_func frame, int fps, bool simulate_infinite_loop)
+{
+	(void)fps;
+	(void)simulate_infinite_loop;
+	main_loop_cancelled = 0;
+	while (!main_loop_cancelled)
+		frame();
+}
+
+void web_main_loop_cancel(void)
+{
+	main_loop_cancelled = 1;
+}
+
+/* ---------- start */
 
 int main(int argc, char **argv)
 {
@@ -186,9 +269,13 @@ int main(int argc, char **argv)
 		printf("web: cannot mount the game data\n");
 		return 1;
 	}
+	/* the data root (xbox_files.c platform_data_root), which holds the
+	maps, and where port_config.c keeps config.toml and finds brokers.txt
+	under HALO_WEB (tools/web_build.py embeds it at /) */
+	setenv("HALO_DATA_ROOT", WEB_DATA_ROOT, 1);
+	if (symlink("/brokers.txt", WEB_DATA_ROOT "/brokers.txt") != 0)
+		printf("web: cannot link " WEB_DATA_ROOT "/brokers.txt\n");
 	mount_saves();
-	/* the data root is the current directory when it holds maps
-	(xbox_files.c) */
 	chdir(WEB_DATA_ROOT);
 	printf("web: the maps are read from the server as the game needs them\n");
 	{

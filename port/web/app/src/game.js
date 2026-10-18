@@ -157,6 +157,19 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 			// have no CUSTOM kinds (menu_functions.c), and a game on one is
 			// refused with a word to that effect.
 			window.ENV.HALO_CUSTOM_EDITION = "0";
+			// No map sharing either (map_share.c): it would download Custom
+			// Edition maps, which the browser does not play, through the
+			// relay, and share none.
+			window.ENV.HALO_NET_MAP_DOWNLOAD = "0";
+			window.ENV.HALO_NET_MAP_SEED = "0";
+			window.ENV.HALO_NET_MAP_SHARE = "0";
+			// No voice chat sent (network_voice.c): the browser would ask for
+			// the microphone as a network game starts, and a host's voices
+			// would go to every joiner through the SFU (port/web/NETWORK.md,
+			// "How it differs from upstream's"). Others' voices still play.
+			window.ENV.HALO_VOICE_CHAT = "off";
+			window.ENV.HALO_NET_VOICE_LOBBY = "0";
+			window.ENV.HALO_NET_VOICE_MODE = "off";
 			new URLSearchParams(location.search).forEach((value, name) => {
 				if (name.startsWith("HALO_")) {
 					window.ENV[name] = value || "1";

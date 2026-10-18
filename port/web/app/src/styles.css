@@ -592,6 +592,15 @@ canvas; the controls take theirs. */
 	touch-action: none;
 }
 
+/* (behind the controls: the aim's swipes; not in the menus, whose taps
+reach the canvas) */
+.touch-look {
+	position: absolute;
+	inset: 0;
+	pointer-events: auto;
+	touch-action: none;
+}
+
 .touch-button {
 	position: absolute;
 	display: flex;

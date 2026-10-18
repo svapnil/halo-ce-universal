@@ -27,7 +27,7 @@ if (typeof importScripts == "function") {
 	gamepad is opened (its rumble: EM_ASM in SDL_emscriptenjoystick.c), which
 	ended the game of anyone with a gamepad plugged in. None here, then; the
 	gamepads themselves are read through the page's thread, as are their ids
-	when one is connected (src/web_gamepad.c). */
+	when one is connected (SDL 3.4.16's: port/web/halo_sdl3.py). */
 	if (typeof navigator != "undefined" && typeof navigator.getGamepads != "function") {
 		navigator.getGamepads = () => [];
 	}

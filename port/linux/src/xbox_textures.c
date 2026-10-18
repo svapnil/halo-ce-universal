@@ -14,7 +14,7 @@ A cached texture stays valid until any page it was read from is written;
 memory_watch.c detects that by write-protecting the pages.
 */
 
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 #include <emscripten.h>
 /* port/web/src/web_stats.c's: the uploads a frame holds */
 extern int web_stats_on;
@@ -28,7 +28,7 @@ void web_stats_texture(unsigned long bytes, double ms);
 #include "../game/cache_file_formats.h"
 
 #include <stdio.h>
-#ifdef HALO_ANDROID
+#ifdef HALO_GLES
 #define GL_BGRA GL_RGBA
 #endif
 #include <stdlib.h>
@@ -429,7 +429,7 @@ static BOOL decode_level(const struct xgpu_texture_description *description, uns
 	return TRUE;
 }
 
-#ifdef HALO_ANDROID
+#ifdef HALO_GLES
 /* ---------- DXT decoding, for ES drivers without S3TC (Mali) */
 
 static unsigned long color565(unsigned long value)
@@ -569,7 +569,7 @@ static GLenum compressed_format(unsigned char kind)
 /* debug.texture_dump_directory writes level 0 of every upload as a TGA, read back from GL */
 static void texture_dump(GLenum target, const struct xgpu_texture_description *description)
 {
-#ifdef HALO_ANDROID
+#ifdef HALO_GLES
 	/* ES cannot read textures back */
 	(void)target;
 	(void)description;
@@ -608,19 +608,6 @@ static void texture_dump(GLenum target, const struct xgpu_texture_description *d
 }
 #endif
 
-#ifdef __EMSCRIPTEN__
-static void swap_red_and_blue(unsigned long *texels, unsigned long count)
-{
-	unsigned long index;
-
-	for (index = 0; index < count; index++)
-	{
-		unsigned long value = texels[index];
-
-		texels[index] = (value & 0xff00ff00UL) | ((value >> 16) & 0xffUL) | ((value & 0xffUL) << 16);
-	}
-}
-#endif
 /* ---------- Custom Edition channel orders
 
 Halo PC keeps what some textures hold in other channels than the game reads
@@ -725,8 +712,16 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	unsigned long *converted;
 	unsigned long face, level;
 
-#ifdef HALO_ANDROID
+#ifdef HALO_GLES
 	decode_compressed = description->compressed && !xgpu_capabilities.s3tc;
+#endif
+#ifdef HALO_WEB
+	/* WebGL's S3TC takes 2D textures whose sides are multiples of 4; and a
+	texture whose channels are where Halo PC keeps them is decoded, to put
+	them in order (WebGL 2 has no texture swizzle) */
+	decode_compressed |= description->compressed &&
+		(target == GL_TEXTURE_3D || (description->width & 3) || (description->height & 3) ||
+			channel_order != _custom_edition_channels_xbox);
 #endif
 	converted = description->compressed && !decode_compressed ? NULL : malloc(largest * sizeof(unsigned long));
 	if (!converted && !(description->compressed && !decode_compressed))
@@ -738,19 +733,15 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 	glBindTexture(target, texture);
 	xgpu_gl_state_invalidate();
 	/* the channel of the texels each channel is sampled from, set on every
-	upload: a texture object can be reused for other texels. Not in the
-	browser: WebGL 2 has no texture swizzle, so converted texels have their
-	red and blue swapped on the CPU (swap_red_and_blue, below), and a Custom
-	Edition channel order would be sampled as it is (the browser build runs
-	no Custom Edition maps: port/web/README.md). */
-#ifdef __EMSCRIPTEN__
-	(void)channel_order;
-	(void)custom_edition_channel_sources;
-#else
+	upload: a texture object can be reused for other texels (WebGL 2 has no
+	texture swizzle: the converted texels' channels are put in order before
+	they are uploaded instead, below; there it is only mods' textures, as
+	Custom Edition maps do not run there) */
+#ifndef HALO_WEB
 	{
 		GLint channels[4] = { GL_RED, GL_GREEN, GL_BLUE, GL_ALPHA };
 
-#ifdef HALO_ANDROID
+#ifdef HALO_GLES
 		/* converted texels are BGRA in memory (32-bit ARGB words); ES takes
 		RGBA */
 		if (converted)
@@ -798,7 +789,7 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 			}
 			else
 			{
-#ifdef HALO_ANDROID
+#ifdef HALO_GLES
 				if (decode_compressed)
 					dxt_decode_level(information.kind, source, (unsigned long)width, (unsigned long)height,
 						(unsigned long)depth, converted);
@@ -811,9 +802,36 @@ static void upload(GLuint texture, GLenum target, const struct xgpu_texture_desc
 					free(converted);
 					return;
 				}
-#ifdef __EMSCRIPTEN__
-				/* WebGL 2 has no texture swizzle: BGRA to RGBA here */
-				swap_red_and_blue(converted, (unsigned long)width * (unsigned long)height * (unsigned long)depth);
+#ifdef HALO_WEB
+				{
+					/* BGRA (32-bit ARGB words) to the RGBA WebGL takes, each
+					channel from where the texels keep it */
+					unsigned long texel, count = (unsigned long)width * (unsigned long)height * (unsigned long)depth;
+
+					for (texel = 0; texel < count; texel++)
+					{
+						unsigned long value = converted[texel];
+
+						if (channel_order == _custom_edition_channels_xbox)
+						{
+							converted[texel] = (value & 0xff00ff00UL) | ((value >> 16) & 0xffUL) | ((value & 0xffUL) << 16);
+						}
+						else
+						{
+							/* (red, green, blue and alpha, as stored) */
+							unsigned long stored[4];
+							unsigned long channel;
+
+							stored[0] = (value >> 16) & 0xffUL;
+							stored[1] = (value >> 8) & 0xffUL;
+							stored[2] = value & 0xffUL;
+							stored[3] = (value >> 24) & 0xffUL;
+							converted[texel] = 0;
+							for (channel = 0; channel < 4; channel++)
+								converted[texel] |= stored[custom_edition_channel_sources[channel_order][channel]] << (8 * channel);
+						}
+					}
+				}
 #endif
 				if (target == GL_TEXTURE_3D)
 					glTexImage3D(image_target, (GLint)level, GL_RGBA8, width, height, depth, 0, GL_BGRA, GL_UNSIGNED_BYTE, converted);
@@ -841,6 +859,9 @@ struct texture_entry
 	unsigned long last_used_frame;
 	/* the high-res HUD texture drawn in its place (hud_hires.h), or -1 */
 	long override;
+	GLuint hud_upscale;
+	unsigned long hud_upscale_levels;
+	BOOL hud_upscale_checked;
 	/* the newest generation of its pages (memory_watch_generation) as of the
 	memory watch serial read before it was found: the same while no watched
 	page has been written since (0: never found) */
@@ -892,8 +913,8 @@ static unsigned long palette_hash(const D3DCOLOR *palette)
 	return hash ? hash : 1;
 }
 
-/* an entry's GL texture and description: its high-res HUD texture's, if it has
-one, with the bitmap's own size (which its coordinates are in) */
+/* an entry's GL texture and description: its replacement's, if it has one,
+with the bitmap's own size (which its coordinates are in) */
 static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 	struct xgpu_texture_description *description)
 {
@@ -921,6 +942,17 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 			return art;
 		}
 	}
+	/* (a high-res texture drawn for some sprites, for the placeholder the
+	game draws them from: hud_hires.h) */
+	{
+		GLuint texture = hud_hires_placeholder_texture(entry->data, &description->levels);
+
+		if (texture)
+		{
+			description->hires = TRUE;
+			return texture;
+		}
+	}
 	if (entry->override >= 0)
 	{
 		GLuint texture = hud_hires_override_texture(entry->override, &description->levels);
@@ -931,6 +963,38 @@ static GLuint texture_entry_result(struct texture_entry *entry, GLenum *target,
 			description->hires_coverage = hud_hires_override_coverage(entry->override);
 			description->hires_point_threshold = hud_hires_override_point_threshold(entry->override);
 			return texture;
+		}
+	}
+	/* These sheets keep the map's art and coordinates. Decode through the
+	 * normal format reader; the HUD module owns only the interpolation. */
+	if (config_boolean("display.high_res_hud"))
+	{
+		if (!entry->hud_upscale_checked)
+		{
+			long kind = hud_hires_upscale_at(entry->address, entry->description.width, entry->description.height);
+
+			entry->hud_upscale_checked = TRUE;
+			if (entry->size && !entry->description.compressed && entry->target == GL_TEXTURE_2D &&
+				format_information(entry->description.format).kind != _texel_p8 &&
+				entry->description.width <= 256 && entry->description.height <= 256 &&
+				kind &&
+				custom_edition_texels_order(entry->address) == _custom_edition_channels_xbox &&
+				platform_is_contiguous((void *)entry->address) &&
+				platform_is_contiguous((void *)(entry->address + entry->size - 1)))
+			{
+				unsigned long *pixels = malloc(entry->description.width * entry->description.height * 4);
+
+				if (pixels && decode_level(&entry->description, 0, (const unsigned char *)entry->address, NULL, pixels))
+					entry->hud_upscale = hud_hires_upscale_texture((const unsigned char *)pixels,
+						entry->description.width, entry->description.height, kind, &entry->hud_upscale_levels);
+				free(pixels);
+			}
+		}
+		if (entry->hud_upscale)
+		{
+			description->hires = TRUE;
+			description->levels = entry->hud_upscale_levels;
+			return entry->hud_upscale;
 		}
 	}
 	return entry->texture;
@@ -1042,6 +1106,13 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 		if (!entry->generation)
 			entry->generation = 1;
 		/* (which bitmap is here may have changed with the pixels) */
+		if (entry->hud_upscale)
+		{
+			glDeleteTextures(1, &entry->hud_upscale);
+			entry->hud_upscale = 0;
+			xgpu_gl_state_invalidate();
+		}
+		entry->hud_upscale_checked = FALSE;
 		entry->override = -1;
 		if (entry->size && !palettized && !entry->description.cube_map && entry->description.depth == 1)
 		{
@@ -1071,7 +1142,7 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 					entry->description.height, entry->size, entry->generation,
 					ones * 100 / entry->size, zeros * 100 / entry->size);
 			}
-#ifdef __EMSCRIPTEN__
+#ifdef HALO_WEB
 			{
 				double began = web_stats_on > 0 ? emscripten_get_now() : 0.0;
 
@@ -1102,7 +1173,26 @@ GLuint xgpu_texture_get(const DWORD *resource, const D3DCOLOR *palette, GLenum *
 void xgpu_texture_cache_begin_frame(void)
 {
 	unsigned long index;
+	unsigned long changed = hud_hires_settings_changed();
 
+	/* Refresh only map bitmaps belonging to the setting that changed. Keep
+	 * decoded replacement art and world textures; rebuild native pixels on
+	 * demand too, since an override may have skipped their first upload. */
+	if (changed)
+	{
+		for (index = 0; index < TEXTURE_BUCKET_COUNT; index++)
+		{
+			struct texture_entry *entry;
+
+			for (entry = texture_buckets[index]; entry; entry = entry->next)
+				if (hud_hires_bitmap_affected(entry->address,
+					(long)entry->description.width, (long)entry->description.height, changed))
+					entry->generation = 0;
+		}
+		/* Recent hits bypass the generation check. Forget lookups, not textures. */
+		memset(recent_textures, 0, sizeof(recent_textures));
+		xgpu_gl_state_invalidate();
+	}
 	texture_frame++;
 	if (texture_frame % 600)
 		return;
@@ -1119,6 +1209,8 @@ void xgpu_texture_cache_begin_frame(void)
 			{
 				*link = entry->next;
 				glDeleteTextures(1, &entry->texture);
+				if (entry->hud_upscale)
+					glDeleteTextures(1, &entry->hud_upscale);
 				xgpu_gl_state_invalidate();
 				texture_drop_serial++;
 				free(entry);

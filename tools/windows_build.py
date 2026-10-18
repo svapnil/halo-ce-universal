@@ -18,10 +18,10 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .linux_build import (LINUX_PROFILE, MINIUPNPC_DIR, OPTIMISATION, WINDOWS_PROFILE, XDK_INCLUDE, lto_mode,
-                          march_flag, miniupnpc_sources, pgo_mode, compile_launcher, game_defines_and_includes,
-                          game_sources, musl_math_cflags, musl_math_sources, pgo_profile, profile_use_flags,
-                          xdk_headers)
+from .linux_build import (LINUX_PROFILE, MINIUPNPC_DIR, OPTIMISATION, STB_VORBIS_SOURCE, WINDOWS_PROFILE, XDK_INCLUDE,
+                          lto_mode, march_flag, miniupnpc_sources, pgo_mode, compile_launcher, configuration_defines,
+                          game_defines_and_includes, game_sources, musl_math_cflags, musl_math_sources, opus_cflags,
+                          opus_sources, pgo_profile, profile_use_flags, xdk_headers)
 from .embed_assets import hud_assets_build, hud_configure_inputs
 from .ninja_syntax import Writer
 
@@ -30,6 +30,7 @@ PORT_DIR = Path("port/windows")
 PORT_CONFIG = PORT_DIR / "port.json"
 BUILD = Path("build/windows")
 
+# (as tools/android_build.py's SDL_TAG and tools/linux_sysroot.py's SDL_VERSION)
 SDL_VERSION = "3.4.16"
 SDL_URL = (
     f"https://github.com/libsdl-org/SDL/releases/download/release-{SDL_VERSION}/"
@@ -53,6 +54,8 @@ EXPAT_DIR = Path("port/third_party/expat")
 EXPAT_SOURCES = ("xmlparse.c", "xmlrole.c", "xmltok.c", "random_rand_s.c")
 KCP_DIR = Path("port/third_party/kcp")
 MONOCYPHER_DIR = Path("port/third_party/monocypher")
+# internet play's DTLS with browsers (port/linux/src/posix_dtls.c)
+MBEDTLS_DIR = Path("port/third_party/mbedtls")
 # the port's zlib (port/third_party/zlib/zlib_prefixed.h), which inflates
 # the maps, the menus' and the HUD's PNGs and the updates
 ZLIB_DIR = Path("port/third_party/zlib")
@@ -182,6 +185,15 @@ PROFILE_RUNTIME_HEADERS = [
 ]
 
 
+def windows_rc(cc: str) -> str:
+    """LLVM's resource compiler of the clang named cc: beside it, where cc is
+    a path, else the one on the PATH"""
+    path = Path(cc)
+    if path.parent == Path("."):
+        return "llvm-rc"
+    return str(path.with_name("llvm-rc" + path.suffix))
+
+
 def clang_release(cc: str) -> Optional[str]:
     """the release (22.1.0) of the clang named cc, or None"""
     try:
@@ -292,6 +304,16 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
         rspfile="$out.rsp",
         rspfile_content="$in_newline",
     )
+    # the executable's resources (port/windows/halo.rc: its icon), compiled
+    # by LLVM's resource compiler, beside the clang that builds the game
+    n.variable("windows_rc", windows_rc(cc))
+    n.rule(
+        name="windows_rc",
+        command="$windows_rc /no-preprocess /FO $out $in",
+        description="WINDOWS RC $out",
+    )
+    resources = BUILD / "halo.res"
+    n.build(outputs=resources, rule="windows_rc", inputs=PORT_DIR / "halo.rc", implicit=[PORT_DIR / "opence-icon.ico"])
     n.rule(
         name="windows_copy",
         command="$python -c \"import shutil,sys; shutil.copyfile(sys.argv[1], sys.argv[2])\" $in $out",
@@ -304,8 +326,8 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
     # (a debug build checks its stack frames (/GS), and stops at the first
     # one overrun, as at the first failed assertion; a release build does
     # not, so that an overrun nobody has met cannot end a game)
-    abi = " ".join(WINDOWS_ABI_FLAGS + [march_flag(sln)] + (["-DHALO_RELEASE"] if getattr(sln, "port_release", False)
-                                                            else ["-fstack-protector-strong"]))
+    abi = " ".join(WINDOWS_ABI_FLAGS + [march_flag(sln)] + configuration_defines(sln)
+                   + ([] if getattr(sln, "port_release", False) else ["-fstack-protector-strong"]))
     sdl_include = SDL_DIR / "include"
     libs = " ".join(
         [_quote(SDL_DIR / "lib" / "x86" / "SDL3.lib")]
@@ -373,6 +395,7 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
             add_object(source, flags)
         for source in sorted(Path(linux_config["game_sources"]).glob("*.c")):
             add_object(source, game_cflags)
+        add_object(STB_VORBIS_SOURCE, game_cflags)
 
         linux_platform = Path(linux_config["platform_sources"])
         platform_cflags = " ".join([
@@ -403,10 +426,14 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
             f"-I{_quote(sdl_include)}",
         ])
         replaced = set(config.get("replaced_platform_sources", []))
+        mbedtls_include = f"-I{MBEDTLS_DIR / 'include'}"
         for source in sorted(linux_platform.glob("*.c")):
             if source.name in replaced:
                 continue
-            if source.name == "updater.c":
+            if source.name == "posix_dtls.c":
+                # (Mbed TLS sees the Windows SDK, as the win32_*.c do)
+                add_object(source, f"{win32_cflags} {mbedtls_include}")
+            elif source.name == "updater.c":
                 add_object(source, f"{platform_cflags} {updater_defines(getattr(sln, 'port_release', False))}")
             else:
                 add_object(source, platform_cflags)
@@ -435,6 +462,14 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
             add_object(EXPAT_DIR / name, " ".join([abi, "-std=gnu11", f"-I{EXPAT_DIR}", "-w"]))
         # internet play's reliable streams (port/third_party/kcp; p2p.c)
         add_object(KCP_DIR / "ikcp.c", " ".join([abi, "-std=gnu11", "-w"]))
+        # internet play's DTLS with browsers (port/third_party/mbedtls;
+        # posix_dtls.c), on the Windows SDK (its entropy is BCryptGenRandom)
+        for source in sorted((MBEDTLS_DIR / "library").glob("*.c")):
+            add_object(source, " ".join([abi, *WIN32_FLAGS, mbedtls_include, f"-I{MBEDTLS_DIR / 'library'}",
+                                         "-D_CRT_SECURE_NO_WARNINGS", "-w"]))
+        # voice chat's codec (port/third_party/opus)
+        for source in opus_sources():
+            add_object(source, opus_cflags(abi))
         # internet play's signatures, for public games' listings
         # (port/third_party/monocypher; p2p_crypto.c)
         for name in ("monocypher.c", "monocypher-ed25519.c"):
@@ -450,7 +485,7 @@ def generate_windows_build(n: Writer, sln: Any) -> None:
         n.build(
             outputs=output,
             rule="windows_link",
-            inputs=objects + extra_objects,
+            inputs=objects + extra_objects + [resources],
             variables={"ldflags": " ".join(base_ldflags + extra_ldflags), "libs": libs},
         )
 
