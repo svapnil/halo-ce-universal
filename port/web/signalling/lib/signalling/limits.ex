@@ -10,13 +10,16 @@ defmodule Signalling.Limits do
   use GenServer
 
   @table __MODULE__
-  # (and the lobby's chat: 20 messages a minute)
-  @a_minute %{host: 5, join: 20, chat: 20}
+  # (and the lobby's chat: 20 messages a minute; the browsers' games, GET
+  # /net/games: 120 a minute, a page in the Server Browser asking every 5
+  # seconds)
+  @a_minute %{host: 5, join: 20, chat: 20, games: 120}
 
   def start_link(_), do: GenServer.start_link(__MODULE__, nil, name: __MODULE__)
 
-  # counts one more room (:host), join (:join) or chat message (:chat) of
-  # the address's in this minute; false past the limit
+  # counts one more room (:host), join (:join), chat message (:chat) or
+  # games listing (:games) of the address's in this minute; false past the
+  # limit
   def allow?(kind, address) do
     key = {kind, address, minute()}
     :ets.update_counter(@table, key, 1, {key, 0}) <= Map.fetch!(@a_minute, kind)

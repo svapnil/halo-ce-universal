@@ -711,6 +711,55 @@ test("/stats is not reachable through the relay", { skip: SERVER !== "machine" }
 	assert.equal((await fetch(`${ORIGIN}/stats`)).status, 404);
 });
 
+/* ---------- the browsers' games, for the menus' Server Browser (/net/games) */
+
+async function games(origin = ORIGIN) {
+	const response = await fetch(`${ORIGIN}/net/games`, { headers: { Origin: origin } });
+	assert.equal(response.status, 200);
+	return { response, ...(await response.json()) };
+}
+
+test("/net/games lists the live rooms whose hosts told their games, with their invites", { skip: SERVER === "worker" }, async () => {
+	newAddress();
+	const hostPage = await host();
+	/* (a room with no game yet is not listed) */
+	let listed = await games();
+	assert.match(listed.at, /^\d{4}-\d\d-\d\dT/);
+	assert.equal(listed.games.find((game) => game.room === hostPage.welcome.room), undefined);
+	/* (the site's page may read it) */
+	assert.equal(listed.response.headers.get("access-control-allow-origin"), ORIGIN);
+	assert.equal(listed.response.headers.get("cache-control"), "no-store");
+	assert.equal((await fetch(`${ORIGIN}/net/games`, { headers: { Origin: "https://elsewhere.example" } }))
+		.headers.get("access-control-allow-origin"), null);
+
+	hostPage.send(gameOf({ inProgress: true, players: 2 }));
+	await joiner(hostPage, 1);
+	await hostPage.next("link");
+	await sleep(250);
+	listed = await games();
+	const game = listed.games.find((entry) => entry.room === hostPage.welcome.room);
+	assert.ok(game, JSON.stringify(listed.games));
+	assert.equal(game.secret, hostPage.welcome.secret);
+	assert.equal(game.invite, `${hostPage.welcome.room}.${hostPage.welcome.secret}`);
+	assert.equal(game.hostId, HOST_ID);
+	assert.equal(game.netVersion, 7);
+	assert.equal(game.machines, 2);
+	assert.match(game.matchStartedAt, /^\d{4}-/);
+	assert.deepEqual(
+		[game.name, game.map, game.gametype, game.engine, game.open, game.inProgress, game.teams, game.players, game.maximumPlayers],
+		["New001", "bloodgulch", "Slayer", "slayer", true, true, false, 2, 16]);
+
+	/* gone with its host */
+	hostPage.socket.close();
+	await until(() => hostPage.closed);
+	await sleep(200);
+	assert.equal((await games()).games.find((entry) => entry.room === hostPage.welcome.room), undefined);
+});
+
+test("/net/games is reachable through the relay", { skip: SERVER !== "machine" }, async () => {
+	assert.equal((await fetch(`${ORIGIN}/net/games`)).status, 200);
+});
+
 /* ---------- game cards in the lobby's chat (/net/online; not the Worker's) */
 
 let visitors = 0;

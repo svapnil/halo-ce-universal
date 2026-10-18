@@ -110,9 +110,20 @@ defmodule Signalling.Room do
 
   # every room as it is now (NETWORK.md, "The room's game"): the server's
   # /stats. (A room that does not answer at once is left out)
-  def all do
+  def all, do: ask_all(:state)
+
+  # the games browsers may join (NETWORK.md, "The browsers' games"): every
+  # room whose host is connected and has told it its game, as all/0 has
+  # them and with the invite's secret and the host's id (its identifier,
+  # which the menus match the host's XNADDR by). For /net/games
+  def listings do
+    ask_all(:listing)
+    |> Enum.filter(&(&1.host == "connected" and &1.game != nil))
+  end
+
+  defp ask_all(request) do
     Registry.select(Signalling.Rooms, [{{:_, :"$1", :_}, [], [:"$1"]}])
-    |> Task.async_stream(&GenServer.call(&1, :state, 1000),
+    |> Task.async_stream(&GenServer.call(&1, request, 1000),
       timeout: 2000,
       on_timeout: :kill_task,
       ordered: false
@@ -278,6 +289,9 @@ defmodule Signalling.Room do
   end
 
   def handle_call(:state, _from, room), do: {:reply, state(room), room}
+
+  def handle_call(:listing, _from, room),
+    do: {:reply, Map.merge(state(room), %{secret: room.secret, host_id: room.id}), room}
 
   def handle_call({:card, secret}, _from, room) do
     if Plug.Crypto.secure_compare(secret, room.secret) do

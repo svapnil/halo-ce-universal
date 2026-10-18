@@ -67,9 +67,9 @@ Settings (the environment):
 	RELAY_ALLOW_PRIVATE=1 private addresses allowed, tokens still needed (tests)
 	RELAY_REPORT=1        logs each session's numbers every 5 seconds
 	RELAY_SIGNALLING      where the browsers' signalling is, host:port
-	                      (port/web/signalling, on this machine): /net/rooms/
-	                      and /net/online go there, so that the two share an
-	                      address
+	                      (port/web/signalling, on this machine): /net/rooms/,
+	                      /net/online and /net/games go there, so that the
+	                      two share an address
 	RELAY_METRICS         the port of /metrics, the round trips for Prometheus
 	                      (on Fly.io, fly.toml's [metrics]; not the public
 	                      port's); none if empty
@@ -1297,6 +1297,9 @@ func main() {
 		proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: signalling})
 		mux.Handle("/net/rooms/", proxy)
 		mux.Handle("/net/online", proxy)
+		// the browsers' games for the menus' Server Browser: a page asks
+		// every 5 seconds while it is open (a few KiB)
+		mux.Handle("/net/games", proxy)
 	}
 	if metricsPort != "" {
 		metrics := http.NewServeMux()

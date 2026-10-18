@@ -1,6 +1,7 @@
 # /net/rooms/new (host) and /net/rooms/<room> (join), as the Worker's
 # handleRooms (worker/rooms.js); /net/online, the online count and the
-# lobby's chat; /healthz; and /stats, the rooms' games (on the machine only).
+# lobby's chat; /net/games, the browsers' games for the menus' Server
+# Browser; /healthz; and /stats, the rooms' games (on the machine only).
 defmodule Signalling.Router do
   @moduledoc false
   use Plug.Router
@@ -20,16 +21,59 @@ defmodule Signalling.Router do
     send_resp(conn, 200, "ok #{Registry.count(Signalling.Rooms)}\n")
   end
 
+  # the games browsers may join, as JSON, for the PC menus' Join Game >
+  # Server Browser (NETWORK.md, "The browsers' games"): each live room's
+  # invite and game, as its host's page told it. Every browser game is
+  # public (the chat's cards carry the same), so anyone may ask; the page
+  # asks every 5 seconds while the Server Browser is open, so an address
+  # has 120 a minute. CORS: the page fetches it from the site's origin
+  get "/net/games" do
+    conn = cors(conn)
+
+    if Limits.allow?(:games, address(conn)) do
+      games =
+        for room <- Room.listings() do
+          game = room.game
+
+          %{
+            room: room.room,
+            secret: room.secret,
+            hostId: room.host_id,
+            netVersion: room.net_version,
+            invite: "#{room.room}.#{room.secret}",
+            name: game.name,
+            map: game.map,
+            gametype: game.gametype,
+            engine: game.engine,
+            open: game.open,
+            inProgress: game.in_progress,
+            teams: game.teams,
+            players: game.players,
+            maximumPlayers: game.maximum_players,
+            machines: room.machines,
+            matchStartedAt: room.match_started_at,
+            createdAt: room.created_at
+          }
+        end
+
+      conn
+      |> put_resp_content_type("application/json")
+      |> put_resp_header("cache-control", "no-store")
+      |> send_resp(200, JSON.encode!(%{at: now(), games: games}))
+    else
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(429, JSON.encode!(%{error: "busy", message: "Too many requests from this address"}))
+    end
+  end
+
   # every room and its game, as JSON (NETWORK.md, "The room's game"). Only
-  # on the machine: the relay passes /net/rooms/ and /net/online on, not this
+  # on the machine: the relay passes /net/rooms/, /net/online and /net/games
+  # on, not this
   get "/stats" do
     rooms = Room.all()
 
-    stats = %{
-      at: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601(),
-      online: Signalling.OnlineCount.current(),
-      rooms: rooms
-    }
+    stats = %{at: now(), online: Signalling.OnlineCount.current(), rooms: rooms}
 
     conn
     |> put_resp_content_type("application/json")
@@ -89,6 +133,28 @@ defmodule Signalling.Router do
 
   match _ do
     send_resp(conn, 404, "Not found")
+  end
+
+  defp now, do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+
+  # the page may read the answer from the site's origin (an allowed one;
+  # any, if none is set)
+  defp cors(conn) do
+    origins = Application.fetch_env!(:signalling, :origins)
+    origin = List.first(get_req_header(conn, "origin"))
+
+    cond do
+      origins == [] ->
+        put_resp_header(conn, "access-control-allow-origin", "*")
+
+      origin in origins ->
+        conn
+        |> put_resp_header("access-control-allow-origin", origin)
+        |> put_resp_header("vary", "origin")
+
+      true ->
+        conn
+    end
   end
 
   defp busy(:host), do: "Too many games from this address: try again in a minute"

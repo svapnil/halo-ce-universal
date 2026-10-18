@@ -105,6 +105,9 @@ enum
 	_out_join,
 	/* the hosted game as it is now (struct web_game_state) */
 	_out_game,
+	/* the menus' Server Browser is open (1), closed (0), or asks again (2):
+	the page is to gather the browsers' games (_in_games) */
+	_out_browse,
 };
 
 /* the records of the ring from the page */
@@ -115,7 +118,52 @@ enum
 	_in_link_down,
 	_in_reliable,
 	_in_unreliable,
+	/* the browsers' games, for the Server Browser: struct web_listing each */
+	_in_games,
 };
+
+/* ---------- the browsers' games (NETWORK.md, "The browsers' games")
+
+What the page gathers from the signalling's server while the menus' Server
+Browser is open (GET /net/games: each live room's invite and game, as its
+host's page told it), for web_p2p_select.c to list first, as "[WEB] <name>",
+before the desktop builds' games (p2p_lobby.c's). Joining one joins its
+invite, as Direct Link does, and the menus know the host's game by its
+identifier */
+
+enum
+{
+	WEB_GAMES_MOST = 64,
+};
+
+/* a listing as the page writes it (app/src/web_games.js), NUL-padded texts */
+struct web_listing
+{
+	unsigned char identifier[6];
+	unsigned char players, maximum_players, engine, flags;
+	/* <room>.<secret> */
+	char invite[32];
+	char name[32];
+	char map[32];
+	char gametype[24];
+};
+
+enum
+{
+	_listing_open = 1,
+	_listing_in_progress = 2,
+	_listing_teams = 4,
+};
+
+/* (under p2p_lock) */
+static struct
+{
+	struct web_listing games[WEB_GAMES_MOST];
+	int count;
+	/* those joining failed this run (p2p_lobby_mark_failed) */
+	unsigned char failed[WEB_GAMES_MOST][6];
+	int failed_count;
+} web_games;
 
 /* a stream's messages on the reliable channel (NETWORK.md) */
 enum
@@ -1141,6 +1189,12 @@ static void bridge_readable(void)
 			if (p2p.peers[link].used)
 				datagram_received(link, body, size);
 			break;
+		case _in_games:
+			web_games.count = size / (int)sizeof(struct web_listing);
+			if (web_games.count > WEB_GAMES_MOST)
+				web_games.count = WEB_GAMES_MOST;
+			memcpy(web_games.games, body, (size_t)web_games.count * sizeof(struct web_listing));
+			break;
 		}
 	}
 	if (taken)
@@ -1743,8 +1797,9 @@ void p2p_set_game_player_counts(int count, int maximum)
 	game_state_tell();
 }
 
-/* a room is not listed in the server browser (desktop builds could not
-join it): these keep nothing */
+/* a room is listed for browsers only (/net/games, from what the room is
+told: the hosted game above), never for desktop builds, and has no
+password: these keep nothing */
 void p2p_set_hosting_public(int public)
 {
 	(void)public;
@@ -1755,25 +1810,114 @@ void p2p_set_hosting_password(const char *password)
 	(void)password;
 }
 
+/* ---------- the browsers' games, for the Server Browser (web_games above) */
+
+/* tells the page what the Server Browser does: open (1), closed (0), or
+asking again (2) */
+static void browse_tell(int mode)
+{
+	unsigned char byte = (unsigned char)mode;
+
+	pthread_mutex_lock(&p2p_lock);
+	out_record(0, _out_browse, &byte, 1, NULL, 0);
+	if (!mode)
+		web_games.count = 0;
+	pthread_mutex_unlock(&p2p_lock);
+}
+
 void p2p_lobby_browse(int on)
 {
-	(void)on;
+	browse_tell(on ? 1 : 0);
 }
 
 void p2p_lobby_refresh(void)
 {
+	browse_tell(2);
 }
 
+/* printable ASCII, as the menus' font has it (others: '?'), from a text
+of at most source_size bytes, cut to size - 1 */
+static void listing_text(char *destination, int size, const char *source, int source_size)
+{
+	int index;
+
+	for (index = 0; index < size - 1 && index < source_size && source[index]; index++)
+	{
+		unsigned char character = (unsigned char)source[index];
+
+		destination[index] = character >= 0x20 && character < 0x7F ? (char)character : '?';
+	}
+	destination[index] = 0;
+}
+
+static int web_game_failed(const unsigned char *identifier)
+{
+	int index;
+
+	for (index = 0; index < web_games.failed_count; index++)
+	{
+		if (!memcmp(web_games.failed[index], identifier, 6))
+			return 1;
+	}
+	return 0;
+}
+
+/* the order shown, as p2p_lobby.c's: the most players first; then those
+joining has not failed, the open ones, and by name */
+static int listing_order(const void *first, const void *second)
+{
+	const struct p2p_listing *a = first, *b = second;
+
+	if (a->player_count != b->player_count)
+		return b->player_count - a->player_count;
+	if (a->failed != b->failed)
+		return a->failed - b->failed;
+	if (a->open != b->open)
+		return b->open - a->open;
+	return strcmp(a->name, b->name);
+}
+
+/* the browsers' games as the menus list them: each "[WEB] <name>", with no
+password and no ping */
 int p2p_lobby_games(struct p2p_listing *games, int maximum_count)
 {
-	(void)games;
-	(void)maximum_count;
-	return 0;
+	int count = 0;
+	int index;
+
+	pthread_mutex_lock(&p2p_lock);
+	for (index = 0; index < web_games.count && count < maximum_count; index++)
+	{
+		const struct web_listing *from = &web_games.games[index];
+		struct p2p_listing *to = &games[count++];
+		char name[sizeof(from->name) + 1];
+
+		memset(to, 0, sizeof(*to));
+		listing_text(to->invite, sizeof(to->invite), from->invite, sizeof(from->invite));
+		memcpy(to->identifier, from->identifier, sizeof(to->identifier));
+		listing_text(name, sizeof(name), from->name, sizeof(from->name));
+		snprintf(to->name, sizeof(to->name), "[WEB] %s", name);
+		listing_text(to->map, sizeof(to->map), from->map, sizeof(from->map));
+		listing_text(to->gametype, sizeof(to->gametype), from->gametype, sizeof(from->gametype));
+		to->player_count = from->players;
+		to->maximum_player_count = from->maximum_players;
+		to->engine_type = from->engine;
+		to->open = (from->flags & _listing_open) != 0;
+		to->in_progress = (from->flags & _listing_in_progress) != 0;
+		to->has_teams = (from->flags & _listing_teams) != 0;
+		to->failed = (unsigned char)web_game_failed(from->identifier);
+		to->ping = -1;
+	}
+	pthread_mutex_unlock(&p2p_lock);
+	qsort(games, (size_t)count, sizeof(*games), listing_order);
+	return count;
 }
 
 void p2p_lobby_mark_failed(const unsigned char *identifier)
 {
-	(void)identifier;
+	pthread_mutex_lock(&p2p_lock);
+	if (!web_game_failed(identifier) && web_games.failed_count < WEB_GAMES_MOST)
+		memcpy(web_games.failed[web_games.failed_count++], identifier, 6);
+	pthread_mutex_unlock(&p2p_lock);
 }
 
 /* (web_p2p_select.c has the desktop's open it) */

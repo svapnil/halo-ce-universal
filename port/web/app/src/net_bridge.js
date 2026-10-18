@@ -21,6 +21,10 @@ A transport has:
 	                              (the game's menus' Direct Link)
 	game(state)                   optional: the hosted game as it is now
 	                              (readGame), as it changes
+	browse(mode)                  optional: the menus' Server Browser opened
+	                              (1), closed (0) or asked again (2): the
+	                              browsers' games are wanted (web_games.js),
+	                              written back with start's games(bytes)
 Links are numbered 0 to 127 by the transport; identifiers are the 6 bytes
 the machines' XNADDRs carry.
 */
@@ -39,13 +43,13 @@ const IN_RING = OUT_RING + 16 + RING_SIZE;
 const RING_DATA = 16;
 
 /* the records each way */
-const OUT_TYPES = ["reliable", "unreliable", "hosting", "not-hosting", "join", "game"];
+const OUT_TYPES = ["reliable", "unreliable", "hosting", "not-hosting", "join", "game", "browse"];
 /* struct web_game_state (web_p2p.c): engine, flags, players, maximum
 players, then the name, map and game type, each NUL-padded */
 const GAME_TEXTS = [["name", 4, 32], ["map", 36, 32], ["gametype", 68, 48]];
 const GAME_SIZE = 116;
 /* the game engines, by index (game_engine_index: 0 is co-op's) */
-const ENGINES = ["coop", "ctf", "slayer", "oddball", "king", "race"];
+export const ENGINES = ["coop", "ctf", "slayer", "oddball", "king", "race"];
 
 /* the hosted game, from a "game" record: { name, map, gametype, engine,
 open, inProgress, teams, players, maximumPlayers } */
@@ -69,7 +73,7 @@ export function readGame(body) {
 	}
 	return game;
 }
-const IN_TYPES = { "link-up": 0, "link-down": 1, reliable: 2, unreliable: 3 };
+const IN_TYPES = { "link-up": 0, "link-down": 1, reliable: 2, unreliable: 3, games: 4 };
 /* records from the transport held while the ring to the game is full;
 past this many, unreliable ones are lost */
 const MAXIMUM_HELD = 1024;
@@ -135,6 +139,8 @@ export function startNetBridge(module, transport) {
 				if (game) {
 					transport.game?.(game);
 				}
+			} else if (type === "browse") {
+				transport.browse?.(body[0]);
 			} else if (type) {
 				transport.hosting?.(type === "hosting");
 			}
@@ -213,6 +219,8 @@ export function startNetBridge(module, transport) {
 		linkUp: (link, peer) => write(link, "link-up", peer),
 		linkDown: (link) => write(link, "link-down"),
 		receive: (link, channel, body) => write(link, channel, body),
+		/* (the browsers' games, as web_games.js encodes them) */
+		games: (body) => write(0, "games", body),
 	});
 	return { identifier, netVersion };
 }

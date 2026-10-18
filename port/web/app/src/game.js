@@ -19,6 +19,7 @@ import { startNetBridge } from "./net_bridge.js";
 import { startRelayBridge } from "./relay_bridge.js";
 import { sfuTransport } from "./sfu_transport.js";
 import { tabTransport } from "./tab_transport.js";
+import { withWebGames } from "./web_games.js";
 
 let started = false;
 
@@ -242,8 +243,10 @@ export function startGame(canvas, { onStatus, onNet = () => {}, onLobby = () => 
 					report();
 				},
 			});
-			const transport = new URLSearchParams(location.search).get("net") === "tabs" ?
-				tabTransport() : sfuTransport({ invite, onStatus: onTransport });
+			/* (and the browsers' games for the menus' Server Browser, from the
+			signalling: web_games.js) */
+			const transport = withWebGames(new URLSearchParams(location.search).get("net") === "tabs" ?
+				tabTransport() : sfuTransport({ invite, onStatus: onTransport }));
 			startNetBridge(module, transport);
 			joinFromPage = (invite) => {
 				if (phase !== "main-menu" || !transport.join) {
